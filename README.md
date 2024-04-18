@@ -13,3 +13,5 @@ Nicht vergessen in virtualbox in den settings unter System "EFI aktivieren" einz
 efi.sh funktioniert manchmal nicht, wenn virtualbox läuft
 
 http://kmmoore.github.io/articles/writing-a-uefi-application/
+
+wenn du alles gebaut hast und so, dann musste in der HelloWorld.c noch nen while(1); einfügen, damit nach dem printen der Nachricht nicht sofort wieder der Boot Manager anspringt.
