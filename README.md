@@ -10,6 +10,6 @@ Mit efi.sh kann man nach einem build fix die .EFI updaten (wenn man die Variable
 
 Nicht vergessen in virtualbox in den settings unter System "EFI aktivieren" einzuschalten, sonst wird UEFI übersprungen oder so
 
-efi.sh funktioniert nicht, wenn virtualbox läuft
+efi.sh funktioniert manchmal nicht, wenn virtualbox läuft
 
 http://kmmoore.github.io/articles/writing-a-uefi-application/
