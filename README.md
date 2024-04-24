@@ -1,13 +1,4 @@
-https://github.com/tianocore/tianocore.github.io/wiki/Getting-Started-Writing-Simple-Application
+Rust UEFI github: https://github.com/rust-osdev/uefi-rs
+Rust-UEFI tutorial: https://rust-osdev.github.io/uefi-rs/HEAD/introduction.html
 
-Mit efi.sh kann man nach einem build fix die .EFI updaten (wenn man die Variablen korrekt gesetzt hat)
-
-Nicht vergessen in virtualbox in den settings unter System "EFI aktivieren" einzuschalten, sonst wird UEFI übersprungen oder so
-
-efi.sh funktioniert manchmal nicht, wenn virtualbox läuft
-
-http://kmmoore.github.io/articles/writing-a-uefi-application/
-
-wenn du alles gebaut hast und so, dann musste in der HelloWorld.c noch nen while(1); einfügen, damit nach dem printen der Nachricht nicht sofort wieder der Boot Manager anspringt.
-
-Rust-UEFI: https://rust-osdev.github.io/uefi-rs/HEAD/introduction.html
+Das ganze läuft jetzt mit QEMU. Ich habe ein Makefile geschrieben, mit dem du einfach ```make run_aarch64``` ausführen kannst (können solltest, wenn alles klappt, was ja eher unwahrscheinlich ist...) um das ganze zu bauen und QEMU zu starten.
