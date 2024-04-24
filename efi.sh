@@ -1,10 +1,10 @@
 #!/bin/bash
 
-EFI=edk2/Build/MdeModule/DEBUG_GCC/X64/HelloWorld.efi
+EFI=myboot/target/x86_64-unknown-uefi/debug/myboot.efi
 VDI_IMAGE_UUID=a36011c5-bf38-42d5-8c46-a816cb5ef5ab
 EFI_VOL=vol1
 
-EFI_FILE_TO_REPLACE=vbox_efi_vol/EFI/ubuntu/grubx64.efi # eigentlich wollen wir EFI/BOOT/BOOTX64.EFI ersetzen, aber das klappt irgendwie nicht :( vielleicht mal mit nem USB stick und echter hardware ausprobieren?
+EFI_FILE_TO_REPLACE=vbox_efi_vol/EFI/BOOT/bootx64.EFI # eigentlich wollen wir EFI/BOOT/BOOTX64.EFI ersetzen, aber das klappt irgendwie nicht :( vielleicht mal mit nem USB stick und echter hardware ausprobieren?
 ORIGINAL_EFI_SAVE_LOCATION="$EFI_FILE_TO_REPLACE.ORIGINAL"
 
 
