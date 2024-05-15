@@ -1,53 +1,36 @@
 #![no_main]
 #![no_std]
 
-
 use uefi::prelude::*;
 use uefi::println;
-use log::info;
-use uefi::proto::console::text::{Input, Key, ScanCode};
-use uefi::table::boot::BootServices;
-use uefi::{Char16, ResultExt};
-use core::prelude::v1::Ok;
-use core::fmt::Write;
+use uefi::proto::media::fs::SimpleFileSystem;
+use uefi::table::boot::LoadImageSource;
 
-
+mod disk_helpers;
+mod handle_helpers;
 
 #[entry]
 fn main(_image_handle: Handle, mut st: SystemTable<Boot>) -> Status {
     uefi::helpers::init(&mut st).unwrap();
-    
+    let _ = st.stdout().clear();
+    let bs = st.boot_services();
+
     println!("Hello World!");
 
-    let mut exit_flag = false;
-
-    while !exit_flag {
-        let key = st.stdin().read_key().expect("Expected input");
-        let _ = match key {
-            Some(k) =>  {
-                match k {
-                    uefi::proto::console::text::Key::Printable(p) => {
-                        write!(st.stdout(), "A printable key was entered: {:?}\r\n", p).expect("Write failed");
-                        if p == Char16::try_from(27u16).expect("Unable to convert the ESC ascii code to Char16") {
-                            exit_flag = true;
-                        }
-                    }
-                    uefi::proto::console::text::Key::Special(s) => {
-                        write!(st.stdout(), "A special key was entered: {:?}\r\n", s).expect("Write failed");
-                        if s == ScanCode::ESCAPE {
-                            exit_flag = true;
-                        }
-                    }
-                };             
-            },
-            None => {}
-        };
+    for name in disk_helpers::get_volume_names(bs) {
+        println!("Volume: {}", name);
     }
-    
-    st.boot_services().stall(3_000_000);
+
+    let efis = disk_helpers::search_efis(bs);
+
+    for efi in &efis {
+        let volume_name = disk_helpers::get_volume_name(bs, efi.file_system_handle);
+        println!("EFI found at: {}\\{}", volume_name, efi.file_path);
+    }
+
+    st.boot_services().stall(100_000_000);
     Status::SUCCESS
 }
-
 
 #[panic_handler]
 fn panic(_info: &core::panic::PanicInfo) -> ! {
