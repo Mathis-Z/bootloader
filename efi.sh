@@ -1,10 +1,10 @@
 #!/bin/bash
 
-EFI=myboot/target/x86_64-unknown-uefi/debug/myboot.efi
-VDI_IMAGE_UUID=a36011c5-bf38-42d5-8c46-a816cb5ef5ab
+EFI=/home/mathisz/Dokumente/hpi/BS2/bootloader/myboot/qemu/x86/esp/efi/boot/bootx64.efi
+VDI_IMAGE_UUID=367e08ae-2feb-40b3-941e-7492ed12c8fb
 EFI_VOL=vol1
 
-EFI_FILE_TO_REPLACE=vbox_efi_vol/EFI/BOOT/bootx64.EFI # eigentlich wollen wir EFI/BOOT/BOOTX64.EFI ersetzen, aber das klappt irgendwie nicht :( vielleicht mal mit nem USB stick und echter hardware ausprobieren?
+EFI_FILE_TO_REPLACE=vbox_efi_vol/EFI/BOOT/BOOTX64.EFI # eigentlich wollen wir EFI/BOOT/BOOTX64.EFI ersetzen, aber das klappt irgendwie nicht :( vielleicht mal mit nem USB stick und echter hardware ausprobieren?
 ORIGINAL_EFI_SAVE_LOCATION="$EFI_FILE_TO_REPLACE.ORIGINAL"
 
 
