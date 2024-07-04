@@ -58,7 +58,7 @@ pub fn list_efi_partition_handles(bs: &BootServices) -> Vec<Handle> {
         .find_handles::<SimpleFileSystem>()
         .expect("Failed to get FS handles!");
 
-    for handle in fs_handles {}
+    for _handle in fs_handles {}
 
     return efi_part_handles;
 }

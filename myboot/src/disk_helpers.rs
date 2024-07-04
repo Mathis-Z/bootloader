@@ -1,4 +1,5 @@
 extern crate alloc;
+
 use alloc::{
     boxed::Box,
     fmt,
@@ -10,9 +11,15 @@ use uefi::{
     data_types::EqStrUntilNul,
     prelude::BootServices,
     println,
-    proto::media::{
-        file::{Directory, File, FileInfo, FileMode, FileSystemVolumeLabel},
-        fs::SimpleFileSystem,
+    proto::{
+        device_path::{
+            text::{AllowShortcuts, DevicePathFromText, DevicePathToText, DisplayOnly},
+            DevicePath,
+        },
+        media::{
+            file::{Directory, File, FileInfo, FileMode, FileSystemVolumeLabel},
+            fs::SimpleFileSystem,
+        },
     },
     table::boot::LoadImageSource,
     CStr16, Char16, Handle,
@@ -58,6 +65,8 @@ pub struct EFI {
     pub file_system_handle: Handle,
     pub volume_name: CString16,
     pub file_path: CString16,
+    pub device_path_string: CString16,
+    pub device_path: Box<DevicePath>,
 }
 
 impl fmt::Display for EFI {
@@ -88,11 +97,22 @@ pub fn search_efis(bs: &BootServices) -> Vec<EFI> {
                             prefixed_path.push(Char16::try_from('\\').unwrap());
                             prefixed_path.push_str(&file_path);
 
-                            efis.push(EFI {
-                                file_system_handle: fs_handle,
-                                volume_name: volume_name_from_root_dir(&mut root_directory),
-                                file_path: prefixed_path,
-                            });
+                            if let Some(dpath) =
+                                get_device_path_for_file(bs, &fs_handle, &prefixed_path)
+                            {
+                                efis.push(EFI {
+                                    file_system_handle: fs_handle,
+                                    volume_name: volume_name_from_root_dir(&mut root_directory),
+                                    file_path: prefixed_path.clone(),
+                                    device_path_string: get_device_path_string_for_file(
+                                        bs,
+                                        &fs_handle,
+                                        &prefixed_path.clone(),
+                                    )
+                                    .expect("failed to get devicepath"),
+                                    device_path: dpath,
+                                });
+                            }
                         }
                     }
                 }
@@ -100,6 +120,81 @@ pub fn search_efis(bs: &BootServices) -> Vec<EFI> {
         }
     }
     return efis;
+}
+
+fn device_path_to_string(bs: &BootServices, device_path: &DevicePath) -> CString16 {
+    if let Ok(handle) = bs.get_handle_for_protocol::<DevicePathToText>() {
+        if let Ok(binding) = bs.open_protocol_exclusive::<DevicePathToText>(handle) {
+            if let Some(device_path_to_text) = binding.get() {
+                if let Ok(pool_string) = device_path_to_text.convert_device_path_to_text(
+                    bs,
+                    device_path,
+                    DisplayOnly(true),
+                    AllowShortcuts(true),
+                ) {
+                    let mut string = CString16::new();
+                    for char in pool_string.iter() {
+                        string.push(*char);
+                    }
+                    return string;
+                }
+            }
+        }
+    }
+
+    CString16::try_from("[DevicePath]").unwrap()
+}
+
+fn get_device_path_string_for_file(
+    bs: &BootServices,
+    fs_handle: &Handle,
+    file_path: &CString16,
+) -> Option<CString16> {
+    let scoped_prot = bs.open_protocol_exclusive::<DevicePath>(*fs_handle).ok()?;
+    let fs_dpath: &DevicePath = scoped_prot.get_mut()?;
+
+    let mut fs_dpath_string = fs_dpath
+        .to_string(bs, DisplayOnly(false), AllowShortcuts(true))
+        .ok()?;
+
+    fs_dpath_string.push_str(&CString16::try_from("/\\").unwrap());
+    fs_dpath_string.push_str(file_path);
+
+    Some(fs_dpath_string)
+}
+
+fn get_device_path_for_file(
+    bs: &BootServices,
+    fs_handle: &Handle,
+    file_path: &CString16,
+) -> Option<Box<DevicePath>> {
+    let dpath_string = get_device_path_string_for_file(bs, fs_handle, file_path)?;
+
+    let handle = bs.get_handle_for_protocol::<DevicePathFromText>().ok()?;
+    let binding = bs
+        .open_protocol_exclusive::<DevicePathFromText>(handle)
+        .ok()?;
+    let device_path_from_text: &DevicePathFromText = binding.get()?;
+
+    Some(
+        device_path_from_text
+            .convert_text_to_device_path(dpath_string.as_ref())
+            .ok()?
+            .to_boxed(),
+    )
+}
+
+fn duplicate_backticks_in_path(path: &CString16) -> CString16 {
+    let mut new_string = CString16::new();
+
+    for char in path.iter() {
+        if *char == Char16::try_from('\\').unwrap() {
+            new_string.push(*char);
+        }
+        new_string.push(*char);
+    }
+
+    new_string
 }
 
 fn search_efi_paths_in_directory(dir: &mut Directory) -> Vec<CString16> {
@@ -260,6 +355,27 @@ pub fn start_efi(_image_handle: &Handle, bs: &BootServices, efi: &EFI) {
                     }
                 }
             }
+        }
+    }
+}
+
+pub fn start_efi2(_image_handle: &Handle, bs: &BootServices, efi: &EFI) {
+    match bs.load_image(
+        *_image_handle,
+        LoadImageSource::FromDevicePath {
+            device_path: &efi.device_path,
+            from_boot_manager: true,
+        },
+    ) {
+        Ok(loaded_image) => {
+            println!("Starting image...\n\n");
+            bs.stall(1_500_000);
+
+            let _ = bs.start_image(loaded_image);
+            println!("The EFI application exited");
+        }
+        Err(err) => {
+            println!("Failed to load EFI image into buffer because of: {}", err);
         }
     }
 }

@@ -1,7 +1,7 @@
 use core::fmt::Display;
 use core::fmt::Write;
 use uefi::prelude::*;
-use uefi::println;
+
 use uefi::proto::console::text::Key;
 use uefi::proto::console::text::ScanCode;
 use uefi::Char16;
@@ -40,7 +40,7 @@ pub fn iterate_list<T: Display>(st: &mut SystemTable<Boot>, list: &[T]) -> usize
                     }
                     // checks if pressed key is ArrowDown
                     Key::Special(ScanCode::DOWN) => {
-                        selected_index = selected_index.saturating_add(1).min((list.len() - 1)); // preventing integer wrap-around
+                        selected_index = selected_index.saturating_add(1).min(list.len() - 1); // preventing integer wrap-around
                         print_list(st, list, selected_index);
                     }
                     Key::Printable(key) => {
