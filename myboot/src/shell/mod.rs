@@ -15,9 +15,9 @@ use uefi::{
 };
 use uefi_raw::Status;
 
-use core::fmt::Debug;
 use core::fmt::Display;
 use core::fmt::Write;
+use core::{ffi::CStr, fmt::Debug};
 
 use self::commands::{Command, Program};
 
@@ -37,15 +37,11 @@ macro_rules! Char16 {
     }};
 }
 
-enum ShellContext<'a> {
-    None,
-    Directory { fs: FileSystem<'a>, cwd: Box<Path> },
-}
-
 pub struct Shell<'s> {
-    width: usize,
-    history: CString16,
-    context: ShellContext<'s>,
+    cmd_history_idx: u32,
+    cmd_history: Vec<Command>,
+    fs: Option<FileSystem<'s>>,
+    cwd: CString16,
     st: &'s mut SystemTable<Boot>,
     pub exit: bool,
 }
@@ -53,11 +49,12 @@ pub struct Shell<'s> {
 impl<'s> Shell<'s> {
     pub fn new(st: &mut SystemTable<Boot>) -> Shell {
         Shell {
-            context: ShellContext::None,
-            st,
-            width: 30,
-            history: CString16::new(),
+            fs: None,
+            cwd: CString16::new(),
+            cmd_history_idx: 0,
+            cmd_history: Vec::new(),
             exit: false,
+            st,
         }
     }
 
@@ -87,7 +84,7 @@ impl<'s> Shell<'s> {
                     match k {
                         Key::Printable(key) => {
                             if key == '\r' {
-                                self.print(&"\r\n");
+                                self.print("\r\n");
                                 let mut s = CString16::new();
                                 for char in line {
                                     s.push(char)
@@ -110,12 +107,20 @@ impl<'s> Shell<'s> {
         }
     }
 
-    pub fn print<T: Display>(&mut self, text: &T) {
+    pub fn newline(&mut self) {
+        write!(self.st.stdout(), "\n").expect("Write failed");
+    }
+
+    pub fn print<T: Display + ?Sized>(&mut self, text: &T) {
         write!(self.st.stdout(), "{}", text).expect("Write failed");
     }
 
-    pub fn println<T: Display>(&mut self, text: &T) {
+    pub fn println<T: Display + ?Sized>(&mut self, text: &T) {
         write!(self.st.stdout(), "{}\n", text).expect("Write failed");
+    }
+
+    pub fn debug_print<T: Debug>(&mut self, text: &T) {
+        write!(self.st.stdout(), "{:?}", text).expect("Write failed");
     }
 
     pub fn debug_println<T: Debug>(&mut self, text: &T) {
@@ -129,6 +134,7 @@ impl<'s> Shell<'s> {
     pub fn execute_command_string(&mut self, command: CString16) {
         if let Some(mut parsed_cmd) = self.parse_command(command) {
             parsed_cmd.execute(self);
+            self.cmd_history.push(parsed_cmd);
         }
     }
 

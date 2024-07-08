@@ -2,13 +2,14 @@ extern crate alloc;
 
 use alloc::{
     boxed::Box,
-    fmt,
+    fmt, format,
     string::{String, ToString},
     vec::Vec,
 };
 
 use uefi::{
     data_types::EqStrUntilNul,
+    fs::FileSystem,
     prelude::BootServices,
     println,
     proto::{
@@ -29,28 +30,52 @@ use uefi::{
     CString16,
 };
 
-pub fn get_volume_names(bs: &BootServices) -> Vec<&CStr16> {
+pub fn get_volume_names(bs: &BootServices) -> Vec<CString16> {
     let handles = bs
         .find_handles::<SimpleFileSystem>()
         .expect("Failed to get FS handles!");
-    let names = Vec::new();
+    let mut names = Vec::new();
 
     for handle in handles {
-        get_volume_name(bs, handle);
+        names.push(get_volume_name(bs, handle));
     }
     return names;
 }
 
+// TODO: Find better fallback name if volume label is empty
 pub fn get_volume_name(bs: &BootServices, fs_handle: Handle) -> CString16 {
     if let Ok(scoped_prot) = bs.open_protocol_exclusive::<SimpleFileSystem>(fs_handle) {
         if let Some(fs_protocol) = scoped_prot.get_mut() {
             if let Ok(mut root_directory) = fs_protocol.open_volume() {
-                return volume_name_from_root_dir(&mut root_directory);
+                let volume_name = volume_name_from_root_dir(&mut root_directory);
+                if volume_name.is_empty() {
+                    return CString16::try_from(format!("{:?}", fs_handle.as_ptr()).as_str())
+                        .unwrap();
+                } else {
+                    return volume_name;
+                }
             }
         }
     }
 
     CString16::try_from("[Volume name error]").unwrap()
+}
+
+pub fn open_volume_by_name<'a>(bs: &'a BootServices, name: &CString16) -> Option<FileSystem<'a>> {
+    let handles = bs
+        .find_handles::<SimpleFileSystem>()
+        .expect("Failed to get FS handles!");
+
+    for handle in handles {
+        if *name == get_volume_name(bs, handle) {
+            let fs = FileSystem::new(
+                bs.open_protocol_exclusive::<SimpleFileSystem>(handle)
+                    .ok()?,
+            );
+            return Some(fs);
+        }
+    }
+    None
 }
 
 fn volume_name_from_root_dir(root_dir: &mut Directory) -> CString16 {
