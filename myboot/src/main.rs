@@ -1,13 +1,19 @@
 #![no_main]
 #![no_std]
 
-use shell::Shell;
+use kernel_loading::kernel_test;
+use memory::print_memory_map;
+use shell::*;
 use uefi::prelude::*;
 
 mod disk_helpers;
+mod gdt;
 mod handle_helpers;
+mod kernel_loading;
+mod kernel_params;
 mod memory;
 mod my_list_logic;
+mod paging;
 mod shell;
 
 #[entry]
@@ -15,12 +21,16 @@ fn main(_image_handle: Handle, mut st: SystemTable<Boot>) -> Status {
     uefi::helpers::init(&mut st).unwrap();
     let _ = st.stdout().clear();
 
-    {
-        let mut shell = Shell::new(&mut st);
-        shell.enter();
-    }
+    print_memory_map(st.boot_services());
 
-    st.boot_services().stall(2_000_000);
+    // {
+    //     let mut shell = Shell::new(&mut st);
+    //     shell.enter();
+    // }
+
+    kernel_test(st);
+
+    // st.boot_services().stall(200_000_000);
     Status::SUCCESS
 }
 
