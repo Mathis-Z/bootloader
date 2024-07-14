@@ -19,7 +19,8 @@ use crate::{
     disk_helpers::open_volume_by_name,
     gdt::{allocate_page_for_gdt, create_and_set_simple_gdt},
     kernel_params,
-    memory::{self, allocate_low_pages},
+    memory::*,
+    paging::*,
 };
 
 use kernel_params::*;
@@ -65,6 +66,8 @@ impl Kernel {
             return;
         }
 
+        let low_pages_for_kernel = allocate_low_pages(bs, 1000);
+
         let setup_code_size = self.kernel_params.get_param(KernelParam::SetupSects) * 512;
         let protected_mode_kernel_start: usize = (setup_code_size + 512).try_into().unwrap();
 
@@ -79,8 +82,17 @@ impl Kernel {
 
         println!("Cmdline allocated at {:x}", cmdline_addr);
 
+        // copying protected mode code to aligned address
+        let protected_mode_slice = &self.blob[protected_mode_kernel_start..];
         let protected_mode_kernel_addr =
-            memory::copy_buf_to_aligned_address(bs, &self.blob[protected_mode_kernel_start..]);
+            allocate_pages_aligned_to_2M(bs, protected_mode_slice.len() / 4096);
+        unsafe {
+            core::ptr::copy(
+                protected_mode_slice.as_ptr(),
+                protected_mode_kernel_addr as *mut u8,
+                protected_mode_slice.len(),
+            );
+        }
 
         println!(
             "protected-mode kernel code copied to {:x}",
@@ -91,18 +103,19 @@ impl Kernel {
 
         println!("Entry point is at {:x}", entry_point);
 
-        st.boot_services().stall(2_000_000);
-
-        println!("Continuing");
-
-        // setting params (there are other params that hopefully are not required for 64bit...)
-
         println!(
-            "XLoadflags: {:x}",
-            self.kernel_params.get_param(KernelParam::XLoadflags)
+            "Kernel requires min alignment: {:x}",
+            self.kernel_params.get_param(KernelParam::MinAlignment)
         );
 
-        st.boot_services().stall(20_000_000);
+        println!(
+            "Kernel wants alignment: {:x}",
+            self.kernel_params.get_param(KernelParam::KernelAlignment)
+        );
+
+        st.boot_services().stall(2_000_000);
+
+        // setting params (there are other params that hopefully are not required for 64bit...)
 
         self.kernel_params
             .set_param(KernelParam::TypeOfLoader, 0xFF);
@@ -126,63 +139,50 @@ impl Kernel {
         );
 
         let gdt_page = allocate_page_for_gdt(bs);
+        println!("Building page tables...");
+        let pml4_ptr = unsafe { prepare_identity_mapped_pml4(bs) };
+        println!("Page tables built at: {:x}", pml4_ptr as u64);
 
         println!("Exiting boot services. Goodbye");
 
         unsafe {
             let (runtime_st, old_mmap) = st.exit_boot_services(MemoryType::LOADER_DATA);
 
-            let st_address = runtime_st.get_current_system_table_addr();
+            KernelParams::set_memory_map(zero_page_addr, &old_mmap, low_pages_for_kernel);
 
-            let mut total_page_num = 0;
-            for memory_descriptor in old_mmap.entries() {
-                total_page_num += memory_descriptor.page_count;
-            }
+            // let st_address = runtime_st.get_current_system_table_addr();
+            // let mut total_page_num = 0;
+            // for memory_descriptor in old_mmap.entries() {
+            //     total_page_num += memory_descriptor.page_count;
+            // }
 
-            let mut identity_mmap = [MemoryDescriptor {
-                ty: MemoryType::LOADER_DATA,
-                phys_start: 0,
-                virt_start: 0,
-                page_count: total_page_num,
-                att: MemoryAttribute::all(),
-            }];
+            // let mut identity_mmap = [MemoryDescriptor {
+            //     ty: MemoryType::CONVENTIONAL,
+            //     phys_start: 0,
+            //     virt_start: 0,
+            //     page_count: total_page_num,
+            //     att: MemoryAttribute::all(),
+            // }];
 
-            runtime_st.set_virtual_address_map(&mut identity_mmap, st_address);
+            // runtime_st.set_virtual_address_map(&mut identity_mmap, st_address);
             create_and_set_simple_gdt(gdt_page);
 
-            Kernel::run(stack_top_addr, entry_point, zero_page_addr);
+            Kernel::run(pml4_ptr as u64, stack_top_addr, entry_point, zero_page_addr);
         }
     }
 
-    /// https://github.com/rust-osdev/bootloader/blob/main/common/src/lib.rs
-    // unsafe fn _run(page_table_addr: u64, stack_top: u64, entry_point: u64, boot_info: u64) -> ! {
-    //     unsafe {
-    //         asm!(
-    //             r#"
-    //             xor rbp, rbp
-    //             mov cr3, {}
-    //             mov rsp, {}
-    //             push 0
-    //             jmp {}
-    //             "#,
-    //             in(reg) page_table_addr,
-    //             in(reg) stack_top,
-    //             in(reg) entry_point,
-    //             in("rdi") boot_info as *const u64 as usize,
-    //         );
-    //     }
-    //     unreachable!();
-    // }
-
-    unsafe fn run(stack_top: u64, entry_point: u64, boot_info: u64) -> ! {
+    // https://github.com/rust-osdev/bootloader/blob/main/common/src/lib.rs
+    unsafe fn run(page_table_addr: u64, stack_top: u64, entry_point: u64, boot_info: u64) -> ! {
         unsafe {
             asm!(
                 r#"
                 xor rbp, rbp
+                mov cr3, {}
                 mov rsp, {}
                 push 0
                 jmp {}
                 "#,
+                in(reg) page_table_addr,
                 in(reg) stack_top,
                 in(reg) entry_point,
                 in("rsi") boot_info as *const u64 as usize,
@@ -190,6 +190,23 @@ impl Kernel {
         }
         unreachable!();
     }
+
+    // unsafe fn run(stack_top: u64, entry_point: u64, boot_info: u64) -> ! {
+    //     unsafe {
+    //         asm!(
+    //             r#"
+    //             xor rbp, rbp
+    //             mov rsp, {}
+    //             push 0
+    //             jmp {}
+    //             "#,
+    //             in(reg) stack_top,
+    //             in(reg) entry_point,
+    //             in("rsi") boot_info as *const u64 as usize,
+    //         );
+    //     }
+    //     unreachable!();
+    // }
 }
 
 pub fn kernel_test(st: SystemTable<Boot>) {

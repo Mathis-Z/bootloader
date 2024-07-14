@@ -16,10 +16,6 @@ pub fn print_memory_map(bs: &BootServices) {
             memory_map.sort();
             let mut i = 0;
             for md in memory_map.entries() {
-                i += 1;
-                if i > 20 {
-                    break;
-                }
                 println!(
                     "phys {:#X} virt {:#X} size {} ty {:?}",
                     md.phys_start,
@@ -40,6 +36,30 @@ pub fn allocate_pages(bs: &BootServices, count: usize) -> u64 {
         count,
     ) {
         Ok(dst) => {
+            unsafe {
+                core::ptr::write_bytes(dst as *mut u8, 0, 4096 * count); // zero out pages
+            }
+            dst
+        }
+        Err(err) => {
+            println!("Error: failed to allocate pages due to error: {}", err);
+            0
+        }
+    }
+}
+
+pub fn allocate_pages_aligned_to_2M(bs: &BootServices, count: usize) -> u64 {
+    const TWO_MEGABYTE: u64 = 2 * 1024 * 1024 * 1024;
+    const PAGES_FOR_2M: usize = (TWO_MEGABYTE / 4096) as usize;
+
+    match bs.allocate_pages(
+        AllocateType::MaxAddress(1 << 32), // stay under 4G to be safe (>4G could be fine with 64 bit but who knows)
+        MemoryType::LOADER_DATA,
+        count + PAGES_FOR_2M,
+    ) {
+        Ok(dst) => {
+            let dst = (dst - 1) / TWO_MEGABYTE + TWO_MEGABYTE; // round to 2M
+
             unsafe {
                 core::ptr::write_bytes(dst as *mut u8, 0, 4096 * count); // zero out pages
             }

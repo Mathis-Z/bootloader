@@ -1,11 +1,16 @@
 // https://github.com/torvalds/linux/blob/v4.16/Documentation/x86/boot.txt
 
 extern crate alloc;
-use core::{mem, slice};
+use core::{arch::asm, mem, slice};
 
 use alloc::vec::Vec;
-use uefi::{prelude::BootServices, println, table::Boot};
-use uefi_raw::PhysicalAddress;
+use uefi::{
+    prelude::BootServices,
+    println,
+    proto::console::gop::GraphicsOutput,
+    table::{boot::MemoryMap, Boot, SystemTable},
+};
+use uefi_raw::{table::boot::MemoryType, PhysicalAddress};
 
 use crate::memory::{allocate_low_pages, copy_buf_to_low_aligned_address};
 
@@ -50,6 +55,20 @@ struct ScreenInfo {
     // probably not aligned correctly :(
     ext_lfb_base: u32,  /* 0x3a */
     _reserved: [u8; 2], /* 0x3e */
+}
+
+const E820_TYPE_RAM: u32 = 1;
+const E820_TYPE_RESERVED: u32 = 2;
+const E820_TYPE_ACPI: u32 = 3;
+const E820_TYPE_NVS: u32 = 4;
+const E820_TYPE_UNUSABLE: u32 = 5;
+const E820_TYPE_PMEM: u32 = 7;
+#[derive(Default, Copy, Clone)]
+#[repr(C, packed)]
+struct E820Entry {
+    addr: u64,
+    size: u64,
+    typ: u32,
 }
 
 #[derive(Debug)]
@@ -122,9 +141,9 @@ impl KernelParam {
             KernelParam::ExtLoaderType => todo!(),
             KernelParam::CmdLinePtr => (0x228, 4),
             KernelParam::InitrdAddressMax => todo!(),
-            KernelParam::KernelAlignment => todo!(),
+            KernelParam::KernelAlignment => (0x230, 4),
             KernelParam::RelocatableKernel => (0x234, 1),
-            KernelParam::MinAlignment => todo!(),
+            KernelParam::MinAlignment => (0x235, 1),
             KernelParam::XLoadflags => (0x236, 2),
             KernelParam::CmdlineSize => (0x238, 4),
             KernelParam::HardwareSubarch => todo!(),
@@ -198,23 +217,74 @@ impl KernelParams {
                 self.buf.len(),
             );
         }
-        KernelParams::set_video_params(zero_page);
+        KernelParams::set_video_params(zero_page, bs);
 
         zero_page
     }
 
-    fn set_video_params(zero_page: u64) {
+    pub fn set_video_params(zero_page: u64, bs: &BootServices) {
         let screen_info = unsafe { &mut *(zero_page as *mut ScreenInfo) };
 
         screen_info.orig_x = 0;
         screen_info.orig_y = 25;
-        screen_info.ext_mem_k = 0; // what is this?
-        screen_info.orig_video_page = 0;
-        screen_info.orig_video_mode = 0x07;
         screen_info.orig_video_cols = 80;
         screen_info.orig_video_lines = 25;
         screen_info.orig_video_isVGA = 1;
         screen_info.orig_video_points = 16;
+    }
+
+    fn get_screen_info(bs: &BootServices) -> (u32, u32) {
+        let gop_handle = bs.get_handle_for_protocol::<GraphicsOutput>().unwrap();
+
+        let binding = bs
+            .open_protocol_exclusive::<GraphicsOutput>(gop_handle)
+            .unwrap();
+        let gop = binding.get().unwrap();
+
+        let mode_info = gop.current_mode_info();
+        (
+            mode_info.resolution().0.try_into().unwrap(),
+            mode_info.resolution().1.try_into().unwrap(),
+        )
+    }
+
+    pub fn set_memory_map(zero_page: u64, mmap: &MemoryMap, low_pages_for_kernel: u64) {
+        const MEMORY_MAX: u64 = 4 * 1024 * 1024 * 1024;
+
+        let mut new_mmap: [E820Entry; 20] = [E820Entry::default(); 20];
+
+        let mut i = 0;
+        for entry in mmap.entries() {
+            let typ = match entry.ty {
+                MemoryType::CONVENTIONAL => E820_TYPE_RAM,
+                MemoryType::RESERVED => E820_TYPE_RESERVED,
+                MemoryType::BOOT_SERVICES_CODE => E820_TYPE_RAM,
+                MemoryType::BOOT_SERVICES_DATA => E820_TYPE_RAM,
+                MemoryType::LOADER_CODE => E820_TYPE_RAM,
+                MemoryType::LOADER_DATA => E820_TYPE_RAM,
+                _ => E820_TYPE_RESERVED,
+            };
+
+            new_mmap[i] = E820Entry {
+                addr: entry.virt_start,
+                size: entry.page_count * 4096,
+                typ,
+            };
+
+            i += 1;
+            if i >= 20 {
+                break;
+            }
+        }
+
+        let e820_entries_ptr = (zero_page + 0x1e8) as *mut u8;
+        let e820_table_ptr = (zero_page + 0x2d0) as *mut E820Entry;
+
+        unsafe {
+            *e820_entries_ptr = i as u8;
+
+            core::ptr::copy(new_mmap.as_ptr(), e820_table_ptr, new_mmap.len());
+        };
     }
 }
 
@@ -237,12 +307,13 @@ fn to_bytes<T: Into<u64>>(num: T) -> [u8; 8] {
 pub fn allocate_cmdline(bs: &BootServices) -> PhysicalAddress {
     let addr = allocate_low_pages(bs, 1);
 
-    let auto_buf: [u8; 4] = [0x61, 0x75, 0x74, 0x6f]; // 'auto' as kernel cmdline
-
     unsafe {
         let ptr = addr as *mut u8;
-        for (i, byte) in auto_buf.iter().enumerate() {
-            *ptr.offset(i.try_into().unwrap()) = *byte;
+        for (i, c) in "keep_bootcon root=dev/sdb3 earlyprintk=ttyS0,115200"
+            .chars()
+            .enumerate()
+        {
+            *ptr.offset(i.try_into().unwrap()) = c as u8;
         }
     }
     addr
