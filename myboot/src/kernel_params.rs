@@ -113,9 +113,9 @@ impl KernelParam {
             KernelParam::TypeOfLoader => (0x210, 1),
             KernelParam::LoadFlags => todo!(),
             KernelParam::SetupMoveSize => todo!(),
-            KernelParam::Code32Start => todo!(),
-            KernelParam::RamdiskImage => todo!(),
-            KernelParam::RamdiskSize => todo!(),
+            KernelParam::Code32Start => (0x214, 4),
+            KernelParam::RamdiskImage => (0x218, 4),
+            KernelParam::RamdiskSize => (0x21c, 4),
             KernelParam::BootsectKludge => todo!(),
             KernelParam::HeapEndPtr => (0x224, 2),
             KernelParam::ExtLoaderVer => todo!(),
@@ -134,7 +134,7 @@ impl KernelParam {
             KernelParam::SetupData => todo!(),
             KernelParam::PrefAddress => todo!(),
             KernelParam::InitSize => (0x260, 4),
-            KernelParam::HandoverOffset => todo!(),
+            KernelParam::HandoverOffset => (0x264, 4),
         };
         (offset - 0x1f1, size)
     }
@@ -237,12 +237,10 @@ fn to_bytes<T: Into<u64>>(num: T) -> [u8; 8] {
 pub fn allocate_cmdline(bs: &BootServices) -> PhysicalAddress {
     let addr = allocate_low_pages(bs, 1);
 
-    let auto_buf: [u8; 4] = [0x61, 0x75, 0x74, 0x6f]; // 'auto' as kernel cmdline
-
     unsafe {
         let ptr = addr as *mut u8;
-        for (i, byte) in auto_buf.iter().enumerate() {
-            *ptr.offset(i.try_into().unwrap()) = *byte;
+        for (i, c) in "root=/dev/sdb3".chars().enumerate() {
+            *ptr.offset(i.try_into().unwrap()) = c as u8;
         }
     }
     addr

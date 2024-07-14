@@ -28,7 +28,7 @@ fn main(_image_handle: Handle, mut st: SystemTable<Boot>) -> Status {
     //     shell.enter();
     // }
 
-    kernel_test(st);
+    kernel_test(&_image_handle, st);
 
     // st.boot_services().stall(200_000_000);
     Status::SUCCESS
