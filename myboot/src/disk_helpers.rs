@@ -193,7 +193,7 @@ fn get_device_path_string_for_file(
         .to_string(bs, DisplayOnly(false), AllowShortcuts(true))
         .ok()?;
 
-    fs_dpath_string.push_str(&CString16::try_from("/\\").unwrap());
+    fs_dpath_string.push_str(&CString16::try_from("/").unwrap());
     fs_dpath_string.push_str(file_path);
 
     Some(fs_dpath_string)

@@ -17,7 +17,7 @@ use uefi::{
     CStr16, CString16, Char16,
 };
 
-use crate::{disk_helpers::*, *};
+use crate::{disk_helpers::*, kernel_loading::Kernel, *};
 
 pub enum Program {
     HELP,
@@ -27,6 +27,7 @@ pub enum Program {
     PRINTMMAP,
     CD,
     RUNEFI,
+    RUNKERNEL,
 }
 
 pub struct Command {
@@ -44,10 +45,11 @@ impl Program {
             Program::PRINTMMAP => "printmmap",
             Program::CD => "cd",
             Program::RUNEFI => "runefi",
+            Program::RUNKERNEL => "runkernel",
         })
     }
 
-    pub fn from(string: CString16) -> Option<Program> {
+    pub fn from(string: &CString16) -> Option<Program> {
         match string {
             _ if string.eq_str_until_nul("help") => return Some(Program::HELP),
             _ if string.eq_str_until_nul("exit") => return Some(Program::EXIT),
@@ -56,6 +58,7 @@ impl Program {
             _ if string.eq_str_until_nul("printmmap") => return Some(Program::PRINTMMAP),
             _ if string.eq_str_until_nul("cd") => return Some(Program::CD),
             _ if string.eq_str_until_nul("runefi") => return Some(Program::RUNEFI),
+            _ if string.eq_str_until_nul("runkernel") => return Some(Program::RUNKERNEL),
             _ => return None,
         }
     }
@@ -71,6 +74,7 @@ impl Command {
             Program::PRINTMMAP => self.print_mmap(shell),
             Program::CD => self.cd(shell),
             Program::RUNEFI => self.run_efi(shell),
+            Program::RUNKERNEL => self.run_kernel(shell),
         }
     }
 
@@ -83,6 +87,7 @@ impl Command {
             Program::CLEAR,
             Program::PRINTMMAP,
             Program::RUNEFI,
+            Program::RUNKERNEL,
         ] {
             shell.print("- ");
             shell.println(&program.name());
@@ -296,12 +301,6 @@ impl Command {
                     &fs_handle,
                     &joined_path.to_cstr16().try_into().unwrap(),
                 ) {
-                    println!(
-                        "Loading efi image from device path {}",
-                        device_path
-                            .to_string(bs, DisplayOnly(true), AllowShortcuts(false))
-                            .unwrap()
-                    );
                     start_efi3(&shell._image_handle, bs, &device_path);
                 } else {
                     println!(
@@ -325,12 +324,6 @@ impl Command {
                                 &fs_handle,
                                 &path.to_cstr16().try_into().unwrap(),
                             ) {
-                                println!(
-                                    "Loading efi image from device path {}",
-                                    device_path
-                                        .to_string(bs, DisplayOnly(true), AllowShortcuts(false))
-                                        .unwrap()
-                                );
                                 start_efi3(&shell._image_handle, bs, &device_path);
                             } else {
                                 println!(
@@ -345,6 +338,65 @@ impl Command {
                     }
                 } else {
                     println!("Could not parse volume name and path from: {}", param);
+                }
+            }
+        }
+    }
+
+    pub fn run_kernel(&mut self, shell: &mut Shell) {
+        if self.args.len() != 2 {
+            shell.println("runkernel needs two arguments");
+            return;
+        }
+        let kernel_path = &self.args[0];
+        let kernel_cmdline = &self.args[1];
+        let bs = shell.st.boot_services();
+
+        match &shell.fs_handle {
+            Some(fs_handle) => {
+                let joined_path_string = Command::joined_paths(&shell.cwd, kernel_path);
+                let joined_path = Path::new(&joined_path_string);
+
+                if let Some(mut fs) = open_fs_handle(bs, fs_handle) {
+                    Kernel::load_and_start(
+                        &shell._image_handle,
+                        &shell.st,
+                        kernel_cmdline,
+                        &mut fs,
+                        &joined_path_string,
+                    );
+                } else {
+                    println!("Failed to open FS handle!");
+                }
+            }
+            None => {
+                if let Some((volume_name, rest_path)) = Command::parse_full_path(kernel_path) {
+                    let fs_handle = fs_handle_by_name(bs, &volume_name);
+
+                    match fs_handle {
+                        Some(fs_handle) => {
+                            let mut pathbuf = PathBuf::new();
+                            pathbuf.push(Path::new(&rest_path));
+                            let path = Path::new(pathbuf.to_cstr16());
+
+                            if let Some(mut fs) = open_fs_handle(bs, &fs_handle) {
+                                Kernel::load_and_start(
+                                    &shell._image_handle,
+                                    &shell.st,
+                                    kernel_cmdline,
+                                    &mut fs,
+                                    &path.to_cstr16().try_into().unwrap(),
+                                );
+                            } else {
+                                println!("Failed to open FS handle!");
+                            }
+                        }
+                        None => {
+                            println!("Failed to get handle for FS with name {}", volume_name);
+                        }
+                    }
+                } else {
+                    println!("Could not parse volume name and path from: {}", kernel_path);
                 }
             }
         }

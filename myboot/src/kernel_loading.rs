@@ -24,7 +24,7 @@ use crate::{
 
 use kernel_params::*;
 
-struct Kernel {
+pub struct Kernel {
     blob: Vec<u8>,
     kernel_params: KernelParams,
 }
@@ -33,7 +33,7 @@ impl Kernel {
     pub fn load_and_start(
         handle: &Handle,
         st: &SystemTable<Boot>,
-        cmdline: CString16,
+        cmdline: &CString16,
         fs: &mut FileSystem,
         path: &CString16,
     ) {
@@ -76,7 +76,7 @@ impl Kernel {
         }
     }
 
-    pub fn start(&mut self, handle: &Handle, st: &SystemTable<Boot>, cmdline: CString16) {
+    pub fn start(&mut self, handle: &Handle, st: &SystemTable<Boot>, cmdline: &CString16) {
         let bs = st.boot_services();
 
         if self.kernel_params.get_param(KernelParam::RelocatableKernel) == 0 {
@@ -138,20 +138,5 @@ impl Kernel {
             );
         }
         unreachable!();
-    }
-}
-
-pub fn kernel_test(handle: &Handle, st: &SystemTable<Boot>) {
-    if let Some(mut fs) = open_volume_by_name(
-        st.boot_services(),
-        &CString16::try_from("0xbe939b98").unwrap(),
-    ) {
-        Kernel::load_and_start(
-            handle,
-            &st,
-            CString16::try_from("root=/dev/sdb3").unwrap(),
-            &mut fs,
-            &CString16::try_from("\\EFI\\ubuntu\\vmlinuz").unwrap(),
-        )
     }
 }

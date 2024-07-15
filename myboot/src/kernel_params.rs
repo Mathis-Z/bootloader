@@ -234,7 +234,7 @@ fn to_bytes<T: Into<u64>>(num: T) -> [u8; 8] {
     num_u64.to_le_bytes()
 }
 
-pub fn allocate_cmdline(bs: &BootServices, cmdline: CString16) -> PhysicalAddress {
+pub fn allocate_cmdline(bs: &BootServices, cmdline: &CString16) -> PhysicalAddress {
     let addr = allocate_low_pages(bs, 1);
 
     unsafe {

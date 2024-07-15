@@ -239,12 +239,18 @@ impl Shell {
         if cmd_parts.len() == 0 {
             None
         } else {
-            let program = Program::from(cmd_parts.remove(0))?;
+            let program_string = cmd_parts.remove(0);
+            let program = Program::from(&program_string);
 
-            Some(Command {
-                program,
-                args: cmd_parts,
-            })
+            if let Some(program) = program {
+                Some(Command {
+                    program,
+                    args: cmd_parts,
+                })
+            } else {
+                println!("Unknown program {}", program_string);
+                None
+            }
         }
     }
 }

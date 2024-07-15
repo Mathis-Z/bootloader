@@ -1,7 +1,6 @@
 #![no_main]
 #![no_std]
 
-use kernel_loading::kernel_test;
 use memory::print_memory_map;
 use shell::*;
 use uefi::prelude::*;
