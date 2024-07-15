@@ -9,8 +9,12 @@ use alloc::{
 
 use uefi::{
     fs::{FileSystem, Path},
+    prelude::BootServices,
     println,
-    proto::console::text::{Key, ScanCode},
+    proto::{
+        console::text::{Key, ScanCode},
+        media::fs::SimpleFileSystem,
+    },
     table::{Boot, SystemTable},
     CString16, Char16, Error, Handle, StatusExt,
 };
@@ -19,6 +23,8 @@ use uefi_raw::Status;
 use core::fmt::Display;
 use core::fmt::Write;
 use core::{ffi::CStr, fmt::Debug};
+
+use crate::disk_helpers::*;
 
 use self::commands::{Command, Program};
 
@@ -38,23 +44,25 @@ macro_rules! Char16 {
     }};
 }
 
-pub struct Shell<'s> {
+pub struct Shell {
     cmd_history_idx: usize,
     cmd_history: Vec<CString16>,
-    fs: Option<FileSystem<'s>>,
+    fs_handle: Option<Handle>,
     cwd: CString16,
-    st: &'s mut SystemTable<Boot>,
+    pub _image_handle: Handle,
+    pub st: SystemTable<Boot>,
     pub exit: bool,
 }
 
-impl<'s> Shell<'s> {
-    pub fn new(st: &mut SystemTable<Boot>, _image_handle: Handle) -> Shell {
+impl Shell {
+    pub fn new(st: SystemTable<Boot>, _image_handle: Handle) -> Shell {
         Shell {
-            fs: None,
+            fs_handle: None,
             cwd: CString16::new(),
             cmd_history_idx: 0,
             cmd_history: Vec::new(),
             exit: false,
+            _image_handle,
             st,
         }
     }
@@ -101,7 +109,6 @@ impl<'s> Shell<'s> {
                                 }
                             }
                         }
-                        // checks if pressed key is ArrowDown
                         Key::Special(ScanCode::DOWN) => {
                             if self.cmd_history_idx < self.cmd_history.len() - 1 {
                                 self.cmd_history_idx = self.cmd_history_idx.saturating_add(1);
@@ -165,6 +172,7 @@ impl<'s> Shell<'s> {
     }
 
     pub fn print_shell(&mut self) {
+        self.print(&self.cwd.clone());
         self.print(&CString16::try_from(">> ").unwrap())
     }
 
@@ -175,11 +183,11 @@ impl<'s> Shell<'s> {
     }
 
     pub fn execute_command_string(&mut self, command: CString16) {
+        if !command.is_empty() {
+            self.cmd_history.push(command.clone());
+        }
         if let Some(mut parsed_cmd) = self.parse_command(&command) {
             parsed_cmd.execute(self);
-        }
-        if !command.is_empty() {
-            self.cmd_history.push(command);
         }
     }
 

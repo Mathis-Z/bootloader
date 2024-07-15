@@ -14,6 +14,7 @@ use uefi::{
     println,
     proto::{
         device_path::{
+            self,
             text::{AllowShortcuts, DevicePathFromText, DevicePathToText, DisplayOnly},
             DevicePath,
         },
@@ -22,7 +23,7 @@ use uefi::{
             fs::SimpleFileSystem,
         },
     },
-    table::boot::LoadImageSource,
+    table::{boot::LoadImageSource, Boot, SystemTable},
     CStr16, Char16, Handle,
 };
 use uefi::{
@@ -62,20 +63,30 @@ pub fn get_volume_name(bs: &BootServices, fs_handle: Handle) -> CString16 {
 }
 
 pub fn open_volume_by_name<'a>(bs: &'a BootServices, name: &CString16) -> Option<FileSystem<'a>> {
+    if let Some(fs_handle) = fs_handle_by_name(bs, name) {
+        return open_fs_handle(bs, &fs_handle);
+    }
+    None
+}
+
+pub fn fs_handle_by_name<'a>(bs: &'a BootServices, name: &CString16) -> Option<Handle> {
     let handles = bs
         .find_handles::<SimpleFileSystem>()
         .expect("Failed to get FS handles!");
 
     for handle in handles {
         if *name == get_volume_name(bs, handle) {
-            let fs = FileSystem::new(
-                bs.open_protocol_exclusive::<SimpleFileSystem>(handle)
-                    .ok()?,
-            );
-            return Some(fs);
+            return Some(handle);
         }
     }
     None
+}
+
+pub fn open_fs_handle<'a>(bs: &'a BootServices, fs_handle: &Handle) -> Option<FileSystem<'a>> {
+    Some(FileSystem::new(
+        bs.open_protocol_exclusive::<SimpleFileSystem>(*fs_handle)
+            .ok()?,
+    ))
 }
 
 fn volume_name_from_root_dir(root_dir: &mut Directory) -> CString16 {
@@ -188,7 +199,7 @@ fn get_device_path_string_for_file(
     Some(fs_dpath_string)
 }
 
-fn get_device_path_for_file(
+pub fn get_device_path_for_file(
     bs: &BootServices,
     fs_handle: &Handle,
     file_path: &CString16,
@@ -389,6 +400,27 @@ pub fn start_efi2(_image_handle: &Handle, bs: &BootServices, efi: &EFI) {
         *_image_handle,
         LoadImageSource::FromDevicePath {
             device_path: &efi.device_path,
+            from_boot_manager: true,
+        },
+    ) {
+        Ok(loaded_image) => {
+            println!("Starting image...\n\n");
+            bs.stall(1_500_000);
+
+            let _ = bs.start_image(loaded_image);
+            println!("The EFI application exited");
+        }
+        Err(err) => {
+            println!("Failed to load EFI image into buffer because of: {}", err);
+        }
+    }
+}
+
+pub fn start_efi3(_image_handle: &Handle, bs: &BootServices, device_path: &DevicePath) {
+    match bs.load_image(
+        *_image_handle,
+        LoadImageSource::FromDevicePath {
+            device_path: device_path,
             from_boot_manager: true,
         },
     ) {

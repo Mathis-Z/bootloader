@@ -16,10 +16,6 @@ pub fn print_memory_map(bs: &BootServices) {
             memory_map.sort();
             let mut i = 0;
             for md in memory_map.entries() {
-                i += 1;
-                if i > 20 {
-                    break;
-                }
                 println!(
                     "phys {:#X} virt {:#X} size {} ty {:?}",
                     md.phys_start,
