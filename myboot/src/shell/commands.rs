@@ -76,6 +76,7 @@ impl Command {
         for program in [
             Program::HELP,
             Program::EXIT,
+            Program::CD,
             Program::LS,
             Program::CLEAR,
             Program::PRINTMMAP,
