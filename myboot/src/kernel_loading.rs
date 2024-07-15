@@ -1,25 +1,17 @@
 extern crate alloc;
 
-use core::{arch::asm, mem::size_of};
+use core::arch::asm;
 
-use alloc::{boxed::Box, vec::Vec};
+use alloc::vec::Vec;
 use uefi::{
     fs::{FileSystem, Path},
     prelude::*,
-    print, println,
-    table::boot::AllocateType,
-    CString16, Char16,
-};
-use uefi_raw::{
-    table::boot::{MemoryAttribute, MemoryDescriptor, MemoryType},
-    PhysicalAddress,
+    println, CString16,
 };
 
 use crate::{
-    disk_helpers::open_volume_by_name,
-    gdt::{allocate_page_for_gdt, create_and_set_simple_gdt},
     kernel_params,
-    memory::{self, allocate_low_pages},
+    memory::{self},
 };
 
 use kernel_params::*;

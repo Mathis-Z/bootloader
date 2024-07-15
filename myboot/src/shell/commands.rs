@@ -1,20 +1,13 @@
 extern crate alloc;
-use core::ffi::CStr;
 
 use alloc::{
-    boxed::Box,
-    string::{self, String, ToString},
+    string::{String, ToString},
     vec::Vec,
 };
 use uefi::{
     data_types::EqStrUntilNul,
     fs::{FileSystem, Path, PathBuf},
-    println,
-    proto::{
-        device_path::text::{AllowShortcuts, DisplayOnly},
-        media::fs::SimpleFileSystem,
-    },
-    CStr16, CString16, Char16,
+    println, CString16, Char16,
 };
 
 use crate::{disk_helpers::*, kernel_loading::Kernel, *};
@@ -301,7 +294,7 @@ impl Command {
                     &fs_handle,
                     &joined_path.to_cstr16().try_into().unwrap(),
                 ) {
-                    start_efi3(&shell._image_handle, bs, &device_path);
+                    start_efi(&shell._image_handle, bs, &device_path);
                 } else {
                     println!(
                         "Could not get device path for file path {}",
@@ -324,7 +317,7 @@ impl Command {
                                 &fs_handle,
                                 &path.to_cstr16().try_into().unwrap(),
                             ) {
-                                start_efi3(&shell._image_handle, bs, &device_path);
+                                start_efi(&shell._image_handle, bs, &device_path);
                             } else {
                                 println!(
                                     "Could not get device path for file path {}",
@@ -355,7 +348,6 @@ impl Command {
         match &shell.fs_handle {
             Some(fs_handle) => {
                 let joined_path_string = Command::joined_paths(&shell.cwd, kernel_path);
-                let joined_path = Path::new(&joined_path_string);
 
                 if let Some(mut fs) = open_fs_handle(bs, fs_handle) {
                     Kernel::load_and_start(

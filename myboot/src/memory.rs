@@ -1,20 +1,14 @@
 extern crate alloc;
 
-use core::slice;
-
-use alloc::vec::Vec;
 use uefi::{prelude::*, println, table::boot::AllocateType};
 use uefi_raw::{table::boot::MemoryType, PhysicalAddress};
 
 pub fn print_memory_map(bs: &BootServices) {
-    let memory_map_size = bs.memory_map_size();
-
     let mut buf: [u8; 20000] = [0; 20000];
 
     match bs.memory_map(&mut buf) {
         Ok(mut memory_map) => {
             memory_map.sort();
-            let mut i = 0;
             for md in memory_map.entries() {
                 println!(
                     "phys {:#X} virt {:#X} size {} ty {:?}",
@@ -71,16 +65,6 @@ pub fn copy_buf_to_aligned_address(bs: &BootServices, buf: &[u8]) -> PhysicalAdd
     let page_count = (buf.len() - 1) / 4096 + 1;
 
     let dst = allocate_pages(bs, page_count);
-    unsafe {
-        core::ptr::copy(buf.as_ptr(), dst as *mut u8, buf.len());
-    }
-    dst
-}
-
-pub fn copy_buf_to_low_aligned_address(bs: &BootServices, buf: &[u8]) -> PhysicalAddress {
-    let page_count = (buf.len() - 1) / 4096 + 1;
-
-    let dst = allocate_low_pages(bs, page_count);
     unsafe {
         core::ptr::copy(buf.as_ptr(), dst as *mut u8, buf.len());
     }

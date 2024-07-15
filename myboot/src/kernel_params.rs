@@ -1,13 +1,12 @@
 // https://github.com/torvalds/linux/blob/v4.16/Documentation/x86/boot.txt
 
 extern crate alloc;
-use core::{mem, slice};
 
 use alloc::vec::Vec;
-use uefi::{prelude::BootServices, println, table::Boot, CString16, Char8};
+use uefi::{prelude::BootServices, CString16};
 use uefi_raw::PhysicalAddress;
 
-use crate::memory::{allocate_low_pages, copy_buf_to_low_aligned_address};
+use crate::memory::allocate_low_pages;
 
 #[repr(C, packed)]
 struct ScreenInfo {
@@ -165,28 +164,6 @@ impl KernelParams {
         let value_bytes = &to_bytes(value)[0..size];
 
         old_slice.copy_from_slice(value_bytes);
-    }
-
-    pub fn check(&self) {
-        let boot_flag = self.get_param(KernelParam::BootFlag);
-        let header = self.get_param(KernelParam::Header);
-
-        if boot_flag != 0xaa55 {
-            println!(
-                "Error checking kernel params: boot_flag is {:x} and not 0xaa55!",
-                boot_flag
-            );
-        }
-        if header != 0x53726448 {
-            println!(
-                "Error checking kernel params: header is {:x} and not 0x53726448!",
-                header
-            );
-        }
-    }
-
-    pub fn copy_to_aligned_address(&self, bs: &BootServices) -> u64 {
-        unsafe { copy_buf_to_low_aligned_address(bs, self.buf.as_slice()) }
     }
 
     pub fn copy_into_zero_page(&self, bs: &BootServices) -> u64 {

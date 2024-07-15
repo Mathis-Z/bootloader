@@ -1,30 +1,17 @@
 extern crate alloc;
 
-use alloc::{
-    boxed::Box,
-    fmt,
-    string::{String, ToString},
-    vec::{self, Vec},
-};
+use alloc::vec::Vec;
 
 use uefi::{
-    fs::{FileSystem, Path},
-    prelude::BootServices,
     println,
-    proto::{
-        console::text::{Key, ScanCode},
-        media::fs::SimpleFileSystem,
-    },
+    proto::console::text::{Key, ScanCode},
     table::{Boot, SystemTable},
-    CString16, Char16, Error, Handle, StatusExt,
+    CString16, Char16, Handle,
 };
-use uefi_raw::Status;
 
+use core::fmt::Debug;
 use core::fmt::Display;
 use core::fmt::Write;
-use core::{ffi::CStr, fmt::Debug};
-
-use crate::disk_helpers::*;
 
 use self::commands::{Command, Program};
 
@@ -74,7 +61,7 @@ impl Shell {
         }
         .execute(self);
 
-        self.st.stdout().enable_cursor(true);
+        let _ = self.st.stdout().enable_cursor(true);
 
         while !self.exit {
             self.print_shell();
@@ -151,20 +138,12 @@ impl Shell {
         }
     }
 
-    pub fn newline(&mut self) {
-        write!(self.st.stdout(), "\n").expect("Write failed");
-    }
-
     pub fn print<T: Display + ?Sized>(&mut self, text: &T) {
         write!(self.st.stdout(), "{}", text).expect("Write failed");
     }
 
     pub fn println<T: Display + ?Sized>(&mut self, text: &T) {
         write!(self.st.stdout(), "{}\n", text).expect("Write failed");
-    }
-
-    pub fn debug_print<T: Debug>(&mut self, text: &T) {
-        write!(self.st.stdout(), "{:?}", text).expect("Write failed");
     }
 
     pub fn debug_println<T: Debug>(&mut self, text: &T) {
@@ -177,7 +156,7 @@ impl Shell {
     }
 
     pub fn clear_shell_line(&mut self, chars_to_clear: usize) {
-        for i in 0..chars_to_clear {
+        for _ in 0..chars_to_clear {
             self.print(&Char16::try_from('\x08').unwrap());
         }
     }
