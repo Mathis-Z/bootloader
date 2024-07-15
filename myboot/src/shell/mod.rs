@@ -9,9 +9,10 @@ use alloc::{
 
 use uefi::{
     fs::{FileSystem, Path},
-    proto::console::text::Key,
+    println,
+    proto::console::text::{Key, ScanCode},
     table::{Boot, SystemTable},
-    CString16, Char16, Error, StatusExt,
+    CString16, Char16, Error, Handle, StatusExt,
 };
 use uefi_raw::Status;
 
@@ -38,8 +39,8 @@ macro_rules! Char16 {
 }
 
 pub struct Shell<'s> {
-    cmd_history_idx: u32,
-    cmd_history: Vec<Command>,
+    cmd_history_idx: usize,
+    cmd_history: Vec<CString16>,
     fs: Option<FileSystem<'s>>,
     cwd: CString16,
     st: &'s mut SystemTable<Boot>,
@@ -47,7 +48,7 @@ pub struct Shell<'s> {
 }
 
 impl<'s> Shell<'s> {
-    pub fn new(st: &mut SystemTable<Boot>) -> Shell {
+    pub fn new(st: &mut SystemTable<Boot>, _image_handle: Handle) -> Shell {
         Shell {
             fs: None,
             cwd: CString16::new(),
@@ -77,11 +78,47 @@ impl<'s> Shell<'s> {
     pub fn read_line(&mut self) -> CString16 {
         let mut line = Vec::<Char16>::new();
 
+        self.cmd_history_idx = self.cmd_history.len();
+
         loop {
             let key = self.st.stdin().read_key().expect("Expected input");
             match key {
                 Some(k) => {
                     match k {
+                        Key::Special(ScanCode::UP) => {
+                            self.cmd_history_idx = self.cmd_history_idx.saturating_sub(1);
+
+                            if self.cmd_history_idx < self.cmd_history.len() {
+                                self.clear_shell_line(line.len());
+                                line = Vec::new();
+
+                                for char in self.cmd_history[self.cmd_history_idx].iter() {
+                                    line.push(*char);
+                                }
+
+                                for char in &line {
+                                    self.print(&char);
+                                }
+                            }
+                        }
+                        // checks if pressed key is ArrowDown
+                        Key::Special(ScanCode::DOWN) => {
+                            if self.cmd_history_idx < self.cmd_history.len() - 1 {
+                                self.cmd_history_idx = self.cmd_history_idx.saturating_add(1);
+
+                                self.clear_shell_line(line.len());
+                                line = Vec::new();
+
+                                for char in self.cmd_history[self.cmd_history_idx].iter() {
+                                    line.push(*char);
+                                }
+
+                                for char in &line {
+                                    self.print(&char);
+                                }
+                            }
+                        }
+
                         Key::Printable(key) => {
                             if key == '\r' {
                                 self.print("\r\n");
@@ -131,14 +168,22 @@ impl<'s> Shell<'s> {
         self.print(&CString16::try_from(">> ").unwrap())
     }
 
-    pub fn execute_command_string(&mut self, command: CString16) {
-        if let Some(mut parsed_cmd) = self.parse_command(command) {
-            parsed_cmd.execute(self);
-            self.cmd_history.push(parsed_cmd);
+    pub fn clear_shell_line(&mut self, chars_to_clear: usize) {
+        for i in 0..chars_to_clear {
+            self.print(&Char16::try_from('\x08').unwrap());
         }
     }
 
-    pub fn parse_command(&self, command: CString16) -> Option<Command> {
+    pub fn execute_command_string(&mut self, command: CString16) {
+        if let Some(mut parsed_cmd) = self.parse_command(&command) {
+            parsed_cmd.execute(self);
+        }
+        if !command.is_empty() {
+            self.cmd_history.push(command);
+        }
+    }
+
+    pub fn parse_command(&self, command: &CString16) -> Option<Command> {
         let mut cmd_parts = Vec::<CString16>::new();
         let mut new_cmd_part = CString16::new();
         let mut escaped = false;

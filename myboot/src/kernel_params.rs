@@ -4,7 +4,7 @@ extern crate alloc;
 use core::{mem, slice};
 
 use alloc::vec::Vec;
-use uefi::{prelude::BootServices, println, table::Boot};
+use uefi::{prelude::BootServices, println, table::Boot, CString16, Char8};
 use uefi_raw::PhysicalAddress;
 
 use crate::memory::{allocate_low_pages, copy_buf_to_low_aligned_address};
@@ -234,13 +234,13 @@ fn to_bytes<T: Into<u64>>(num: T) -> [u8; 8] {
     num_u64.to_le_bytes()
 }
 
-pub fn allocate_cmdline(bs: &BootServices) -> PhysicalAddress {
+pub fn allocate_cmdline(bs: &BootServices, cmdline: CString16) -> PhysicalAddress {
     let addr = allocate_low_pages(bs, 1);
 
     unsafe {
         let ptr = addr as *mut u8;
-        for (i, c) in "root=/dev/sdb3".chars().enumerate() {
-            *ptr.offset(i.try_into().unwrap()) = c as u8;
+        for (i, char16) in cmdline.iter().enumerate() {
+            *ptr.offset(i.try_into().unwrap()) = char::from(*char16) as u8;
         }
     }
     addr

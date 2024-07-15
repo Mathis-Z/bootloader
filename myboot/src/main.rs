@@ -21,14 +21,14 @@ fn main(_image_handle: Handle, mut st: SystemTable<Boot>) -> Status {
     uefi::helpers::init(&mut st).unwrap();
     let _ = st.stdout().clear();
 
-    print_memory_map(st.boot_services());
+    //print_memory_map(st.boot_services());
 
-    // {
-    //     let mut shell = Shell::new(&mut st);
-    //     shell.enter();
-    // }
+    {
+        let mut shell = Shell::new(&mut st, _image_handle);
+        shell.enter();
+    }
 
-    kernel_test(&_image_handle, st);
+    //kernel_test(&_image_handle, &st);
 
     // st.boot_services().stall(200_000_000);
     Status::SUCCESS
