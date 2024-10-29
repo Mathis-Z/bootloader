@@ -113,8 +113,6 @@ impl Kernel {
             self.kernel_params.get_param(KernelParam::KernelAlignment)
         );
 
-        st.boot_services().stall(2_000_000);
-
         // setting params (there are other params that hopefully are not required for 64bit...)
 
         self.kernel_params
@@ -143,7 +141,19 @@ impl Kernel {
         let pml4_ptr = unsafe { prepare_identity_mapped_pml4(bs) };
         println!("Page tables built at: {:x}", pml4_ptr as u64);
 
+        let mut buf: [u8; 20000] = [0; 20000];
+        let mmap_size = bs.memory_map_size();
+        let entries = mmap_size.map_size / mmap_size.entry_size;
+        println!("MMap has {entries} entries.");
+        let Ok(mmap) = bs.memory_map(&mut buf) else {
+            println!("Could not fetch mmap!");
+            return;
+        };
+
+        KernelParams::set_memory_map(zero_page_addr, &mmap, low_pages_for_kernel);
+
         println!("Exiting boot services. Goodbye");
+        st.boot_services().stall(2_000_000);
 
         unsafe {
             let (runtime_st, old_mmap) = st.exit_boot_services(MemoryType::LOADER_DATA);

@@ -250,40 +250,38 @@ impl KernelParams {
 
     pub fn set_memory_map(zero_page: u64, mmap: &MemoryMap, low_pages_for_kernel: u64) {
         const MEMORY_MAX: u64 = 4 * 1024 * 1024 * 1024;
+        const MAX_E820_ENTRIES: usize = 128;
 
-        let mut new_mmap: [E820Entry; 20] = [E820Entry::default(); 20];
+        let e820_table = unsafe {
+            slice::from_raw_parts_mut((zero_page + 0x2d0) as *mut E820Entry, MAX_E820_ENTRIES)
+        };
+        let e820_entries_ptr = (zero_page + 0x1e8) as *mut u8;
 
         let mut i = 0;
         for entry in mmap.entries() {
             let typ = match entry.ty {
                 MemoryType::CONVENTIONAL => E820_TYPE_RAM,
-                MemoryType::RESERVED => E820_TYPE_RESERVED,
-                MemoryType::BOOT_SERVICES_CODE => E820_TYPE_RAM,
-                MemoryType::BOOT_SERVICES_DATA => E820_TYPE_RAM,
-                MemoryType::LOADER_CODE => E820_TYPE_RAM,
-                MemoryType::LOADER_DATA => E820_TYPE_RAM,
+                //MemoryType::BOOT_SERVICES_CODE => E820_TYPE_RAM,
+                //MemoryType::BOOT_SERVICES_DATA => E820_TYPE_RAM,
+                //MemoryType::LOADER_CODE => E820_TYPE_RAM,
+                //MemoryType::LOADER_DATA => E820_TYPE_RAM,
                 _ => E820_TYPE_RESERVED,
             };
 
-            new_mmap[i] = E820Entry {
-                addr: entry.virt_start,
+            e820_table[i] = E820Entry {
+                addr: entry.phys_start,
                 size: entry.page_count * 4096,
                 typ,
             };
 
             i += 1;
-            if i >= 20 {
+            if i >= MAX_E820_ENTRIES {
                 break;
             }
         }
 
-        let e820_entries_ptr = (zero_page + 0x1e8) as *mut u8;
-        let e820_table_ptr = (zero_page + 0x2d0) as *mut E820Entry;
-
         unsafe {
             *e820_entries_ptr = i as u8;
-
-            core::ptr::copy(new_mmap.as_ptr(), e820_table_ptr, new_mmap.len());
         };
     }
 }
@@ -309,7 +307,7 @@ pub fn allocate_cmdline(bs: &BootServices) -> PhysicalAddress {
 
     unsafe {
         let ptr = addr as *mut u8;
-        for (i, c) in "keep_bootcon root=dev/sdb3 earlyprintk=ttyS0,115200"
+        for (i, c) in "keep_bootcon root=/dev/sdb3 earlyprintk=ttyS0,115200"
             .chars()
             .enumerate()
         {
