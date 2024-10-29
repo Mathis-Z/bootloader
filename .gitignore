@@ -1,3 +1,2 @@
-myboot/target/
-myboot/qemu/
-qemu/
+target/
+qemu/x86/esp/
