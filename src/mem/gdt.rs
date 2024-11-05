@@ -1,6 +1,6 @@
 use core::{arch::asm, mem::size_of, slice};
 
-use crate::memory::*;
+use crate::mem::*;
 
 #[repr(C, packed)]
 #[derive(Debug, Clone, Copy)]

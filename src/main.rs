@@ -5,11 +5,8 @@ use shell::*;
 use uefi::prelude::*;
 
 mod disk_helpers;
-mod gdt;
-mod kernel_loading;
-mod kernel_params;
-mod memory;
-mod paging;
+mod kernel;
+mod mem;
 mod shell;
 
 #[entry]

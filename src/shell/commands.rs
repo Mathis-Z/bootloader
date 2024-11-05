@@ -11,7 +11,7 @@ use uefi::{
     println, CString16, Char16,
 };
 
-use crate::{kernel_loading::Kernel, *};
+use crate::{kernel::Kernel, *};
 
 pub enum Program {
     HELP,
@@ -196,7 +196,7 @@ impl Command {
     }
 
     fn print_mmap(&mut self, _shell: &mut Shell) {
-        memory::print_memory_map(); // ugly because it does not print using the shell
+        crate::mem::print_memory_map(); // ugly because it does not print using the shell
     }
 
     fn cd(&mut self, shell: &mut Shell) {

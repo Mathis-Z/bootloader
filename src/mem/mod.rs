@@ -5,6 +5,9 @@ use uefi::mem::memory_map::{MemoryMap, MemoryMapMut, MemoryType};
 use uefi::println;
 use uefi_raw::PhysicalAddress;
 
+pub(crate) mod gdt;
+pub(crate) mod paging;
+
 pub fn print_memory_map() {
     match uefi::boot::memory_map(MemoryType::LOADER_DATA) {
         Ok(mut memory_map) => {

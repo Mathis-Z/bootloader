@@ -10,7 +10,7 @@ use uefi::{
 };
 use uefi_raw::PhysicalAddress;
 
-use crate::memory::allocate_low_pages;
+use crate::mem::allocate_low_pages;
 
 #[repr(C, packed)]
 struct ScreenInfo {

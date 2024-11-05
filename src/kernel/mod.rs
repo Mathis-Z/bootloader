@@ -1,14 +1,14 @@
 extern crate alloc;
 
+mod params;
+
 use core::arch::asm;
 
 use alloc::vec::Vec;
 use uefi::boot::MemoryType;
 use uefi::{fs::Path, prelude::*, println, CString16};
 
-use crate::{gdt::*, kernel_params, memory::*, paging::*};
-
-use kernel_params::*;
+use self::params::*;
 
 pub struct Kernel {
     blob: Vec<u8>,
@@ -79,7 +79,7 @@ impl Kernel {
         let protected_mode_kernel_start: usize = (setup_code_size + 512).try_into().unwrap();
 
         let addr =
-            crate::memory::copy_buf_to_aligned_address(&self.blob[protected_mode_kernel_start..]);
+            crate::mem::copy_buf_to_aligned_address(&self.blob[protected_mode_kernel_start..]);
 
         // "if a bootloader which does not install a hook loads a relocatable kernel at a nonstandard address it will have to modify this field to point to the load address."
         self.kernel_params.set_param(KernelParam::Code32Start, addr);
@@ -97,8 +97,8 @@ impl Kernel {
     }
 
     fn setup_stack_and_heap(&mut self) -> u64 {
-        let stack_top_addr = allocate_low_pages(8) + 8 * 4096;
-        let heap_end_addr = allocate_low_pages(8) + 8 * 4096;
+        let stack_top_addr = crate::mem::allocate_low_pages(8) + 8 * 4096;
+        let heap_end_addr = crate::mem::allocate_low_pages(8) + 8 * 4096;
 
         println!(
             "Stack top is at {:x}, Heap end is at {:x}",
@@ -114,7 +114,7 @@ impl Kernel {
     fn start_normal_handover(&mut self) -> ! {
         println!("Starting using normal handover");
 
-        let _low_pages_for_kernel = allocate_low_pages(1000); // TODO: check if necessary
+        let _low_pages_for_kernel = crate::mem::allocate_low_pages(1000); // TODO: check if necessary
 
         let protected_mode_kernel_addr = self.extract_protected_mode_kernel_to_aligned_address();
         let stack_top_addr = self.setup_stack_and_heap();
@@ -129,9 +129,9 @@ impl Kernel {
             zero_page_addr
         );
 
-        let gdt_page = allocate_page_for_gdt();
+        let gdt_page = crate::mem::gdt::allocate_page_for_gdt();
         println!("Building page tables...");
-        let pml4_ptr = unsafe { prepare_identity_mapped_pml4() };
+        let pml4_ptr = unsafe { crate::mem::paging::prepare_identity_mapped_pml4() };
         println!("Page tables built at: {:x}", pml4_ptr as u64);
 
         println!("Exiting boot services. Goodbye");
@@ -140,7 +140,7 @@ impl Kernel {
             let old_mmap = uefi::boot::exit_boot_services(MemoryType::LOADER_DATA);
 
             KernelParams::set_memory_map(zero_page_addr, &old_mmap);
-            create_and_set_simple_gdt(gdt_page);
+            crate::mem::gdt::create_and_set_simple_gdt(gdt_page);
 
             Kernel::run(pml4_ptr as u64, stack_top_addr, entry_point, zero_page_addr);
         }
