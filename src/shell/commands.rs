@@ -187,7 +187,7 @@ impl Command {
         output
     }
 
-    fn clear(&mut self, shell: &mut Shell) {
+    fn clear(&mut self, _shell: &mut Shell) {
         let _ = system::with_stdout(|stdout| stdout.clear());
     }
 
@@ -195,7 +195,7 @@ impl Command {
         shell.exit = true;
     }
 
-    fn print_mmap(&mut self, shell: &mut Shell) {
+    fn print_mmap(&mut self, _shell: &mut Shell) {
         memory::print_memory_map(); // ugly because it does not print using the shell
     }
 
@@ -287,7 +287,7 @@ impl Command {
                     &fs_handle,
                     &joined_path.to_cstr16().try_into().unwrap(),
                 ) {
-                    start_efi(image_handle(), &device_path);
+                    start_efi(&boot::image_handle(), &device_path);
                 } else {
                     println!(
                         "Could not get device path for file path {}",
@@ -309,7 +309,7 @@ impl Command {
                                 &fs_handle,
                                 &path.to_cstr16().try_into().unwrap(),
                             ) {
-                                start_efi(&image_handle(), &device_path);
+                                start_efi(&boot::image_handle(), &device_path);
                             } else {
                                 println!(
                                     "Could not get device path for file path {}",

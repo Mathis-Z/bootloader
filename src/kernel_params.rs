@@ -6,7 +6,6 @@ use alloc::vec::Vec;
 use uefi::{
     boot::MemoryType,
     mem::memory_map::{MemoryMap, MemoryMapOwned},
-    proto::console::gop::GraphicsOutput,
     CString16,
 };
 use uefi_raw::PhysicalAddress;
@@ -26,7 +25,7 @@ struct ScreenInfo {
     orig_video_ega_bx: u16, /* 0x0a */
     unused3: u16,           /* 0x0c */
     orig_video_lines: u8,   /* 0x0e */
-    orig_video_isVGA: u8,   /* 0x0f */
+    orig_video_is_vga: u8,  /* 0x0f */
     orig_video_points: u16, /* 0x10 */
 
     /* VESA graphic mode -- linear frame buffer */
@@ -58,10 +57,10 @@ struct ScreenInfo {
 
 const E820_TYPE_RAM: u32 = 1;
 const E820_TYPE_RESERVED: u32 = 2;
-const E820_TYPE_ACPI: u32 = 3;
-const E820_TYPE_NVS: u32 = 4;
-const E820_TYPE_UNUSABLE: u32 = 5;
-const E820_TYPE_PMEM: u32 = 7;
+const _E820_TYPE_ACPI: u32 = 3;
+const _E820_TYPE_NVS: u32 = 4;
+const _E820_TYPE_UNUSABLE: u32 = 5;
+const _E820_TYPE_PMEM: u32 = 7;
 #[derive(Default, Copy, Clone)]
 #[repr(C, packed)]
 struct E820Entry {
@@ -73,42 +72,42 @@ struct E820Entry {
 #[derive(Debug)]
 pub enum KernelParam {
     SetupSects,
-    RootFlags,
-    SysSize,
-    RamSize,
-    VidMode,
-    RootDev,
-    BootFlag,
-    Jump,
-    Header,
-    Version,
-    RealmodeSwitch,
-    StartSysSeg,
-    KernelVersion,
+    _RootFlags,
+    _SysSize,
+    _RamSize,
+    _VidMode,
+    _RootDev,
+    _BootFlag,
+    _Jump,
+    _Header,
+    _Version,
+    _RealmodeSwitch,
+    _StartSysSeg,
+    _KernelVersion,
     TypeOfLoader,
-    LoadFlags,
-    SetupMoveSize,
+    _LoadFlags,
+    _SetupMoveSize,
     Code32Start,
     RamdiskImage,
     RamdiskSize,
-    BootsectKludge,
+    _BootsectKludge,
     HeapEndPtr,
-    ExtLoaderVer,
-    ExtLoaderType,
+    _ExtLoaderVer,
+    _ExtLoaderType,
     CmdLinePtr,
-    InitrdAddressMax,
-    KernelAlignment,
+    _InitrdAddressMax,
+    _KernelAlignment,
     RelocatableKernel,
-    MinAlignment,
+    _MinAlignment,
     XLoadflags,
-    CmdlineSize,
-    HardwareSubarch,
-    HardwareSubarchData,
-    PayloadOffset,
-    PayloadLength,
-    SetupData,
-    PrefAddress,
-    InitSize,
+    _CmdlineSize,
+    _HardwareSubarch,
+    _HardwareSubarchData,
+    _PayloadOffset,
+    _PayloadLength,
+    _SetupData,
+    _PrefAddress,
+    _InitSize,
     HandoverOffset,
 }
 
@@ -116,43 +115,24 @@ impl KernelParam {
     pub fn offset_and_size(&self) -> (usize, usize) {
         let (offset, size) = match self {
             KernelParam::SetupSects => (0x1f1, 1),
-            KernelParam::RootFlags => (0x1f2, 2),
-            KernelParam::SysSize => todo!(),
-            KernelParam::RamSize => todo!(),
-            KernelParam::VidMode => (0x1fa, 2),
-            KernelParam::RootDev => todo!(),
-            KernelParam::BootFlag => (0x1fe, 2),
-            KernelParam::Jump => todo!(),
-            KernelParam::Header => (0x202, 4),
-            KernelParam::Version => todo!(),
-            KernelParam::RealmodeSwitch => todo!(),
-            KernelParam::StartSysSeg => todo!(),
-            KernelParam::KernelVersion => todo!(),
+            KernelParam::_RootFlags => (0x1f2, 2),
+            KernelParam::_VidMode => (0x1fa, 2),
+            KernelParam::_BootFlag => (0x1fe, 2),
+            KernelParam::_Header => (0x202, 4),
             KernelParam::TypeOfLoader => (0x210, 1),
-            KernelParam::LoadFlags => todo!(),
-            KernelParam::SetupMoveSize => todo!(),
             KernelParam::Code32Start => (0x214, 4),
             KernelParam::RamdiskImage => (0x218, 4),
             KernelParam::RamdiskSize => (0x21c, 4),
-            KernelParam::BootsectKludge => todo!(),
             KernelParam::HeapEndPtr => (0x224, 2),
-            KernelParam::ExtLoaderVer => todo!(),
-            KernelParam::ExtLoaderType => todo!(),
             KernelParam::CmdLinePtr => (0x228, 4),
-            KernelParam::InitrdAddressMax => todo!(),
-            KernelParam::KernelAlignment => (0x230, 4),
+            KernelParam::_KernelAlignment => (0x230, 4),
             KernelParam::RelocatableKernel => (0x234, 1),
-            KernelParam::MinAlignment => (0x235, 1),
+            KernelParam::_MinAlignment => (0x235, 1),
             KernelParam::XLoadflags => (0x236, 2),
-            KernelParam::CmdlineSize => (0x238, 4),
-            KernelParam::HardwareSubarch => todo!(),
-            KernelParam::HardwareSubarchData => todo!(),
-            KernelParam::PayloadOffset => todo!(),
-            KernelParam::PayloadLength => todo!(),
-            KernelParam::SetupData => todo!(),
-            KernelParam::PrefAddress => todo!(),
-            KernelParam::InitSize => (0x260, 4),
+            KernelParam::_CmdlineSize => (0x238, 4),
+            KernelParam::_InitSize => (0x260, 4),
             KernelParam::HandoverOffset => (0x264, 4),
+            _ => todo!(),
         };
         (offset - 0x1f1, size)
     }
@@ -206,25 +186,11 @@ impl KernelParams {
         screen_info.orig_y = 25;
         screen_info.orig_video_cols = 80;
         screen_info.orig_video_lines = 25;
-        screen_info.orig_video_isVGA = 1;
+        screen_info.orig_video_is_vga = 1;
         screen_info.orig_video_points = 16;
     }
 
-    fn get_screen_info() -> (u32, u32) {
-        let gop_handle = uefi::boot::get_handle_for_protocol::<GraphicsOutput>().unwrap();
-
-        let binding = uefi::boot::open_protocol_exclusive::<GraphicsOutput>(gop_handle).unwrap();
-        let gop = binding.get().unwrap();
-
-        let mode_info = gop.current_mode_info();
-        (
-            mode_info.resolution().0.try_into().unwrap(),
-            mode_info.resolution().1.try_into().unwrap(),
-        )
-    }
-
     pub fn set_memory_map(zero_page: u64, mmap: &MemoryMapOwned) {
-        const MEMORY_MAX: u64 = 4 * 1024 * 1024 * 1024;
         const MAX_E820_ENTRIES: usize = 128;
 
         let e820_table = unsafe {

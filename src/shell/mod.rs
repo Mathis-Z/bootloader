@@ -9,7 +9,7 @@ use uefi::{
 };
 
 use core::fmt::Display;
-use core::fmt::{Debug, Write};
+use core::fmt::Write;
 
 use self::commands::{Command, Program};
 
@@ -138,10 +138,6 @@ impl Shell {
 
     pub fn println<T: Display + ?Sized>(&mut self, text: &T) {
         uefi::system::with_stdout(|stdout| write!(stdout, "{}\n", text).expect("Write failed"));
-    }
-
-    pub fn debug_println<T: Debug>(&mut self, text: &T) {
-        uefi::system::with_stdout(|stdout| write!(stdout, "{:?}\n", text).expect("Write failed"));
     }
 
     pub fn print_shell(&mut self) {

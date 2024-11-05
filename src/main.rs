@@ -12,12 +12,6 @@ mod memory;
 mod paging;
 mod shell;
 
-static mut global_image_handle: Option<Handle> = None;
-
-pub fn image_handle() -> &'static mut Handle {
-    unsafe { global_image_handle.as_mut().unwrap() }
-}
-
 #[entry]
 fn main() -> Status {
     uefi::helpers::init().unwrap();

@@ -54,7 +54,7 @@ pub fn create_and_set_simple_gdt(page_addr: u64) {
 
     const ACCESS_BYTE_A: u8 = 0b1;
     const ACCESS_BYTE_RW: u8 = 0b10;
-    const ACCESS_BYTE_DC: u8 = 0b100;
+    const _ACCESS_BYTE_DC: u8 = 0b100;
     const ACCESS_BYTE_E: u8 = 0b1000;
     const ACCESS_BYTE_S: u8 = 0b10000;
     const ACCESS_BYTE_P: u8 = 0b10000000;

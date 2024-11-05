@@ -42,30 +42,6 @@ pub fn allocate_pages(count: usize) -> u64 {
     }
 }
 
-pub fn allocate_pages_aligned_to_2_m(count: usize) -> u64 {
-    const TWO_MEGABYTE: u64 = 2 * 1024 * 1024 * 1024;
-    const PAGES_FOR_2M: usize = (TWO_MEGABYTE / 4096) as usize;
-
-    match uefi::boot::allocate_pages(
-        AllocateType::MaxAddress(1 << 32), // stay under 4G to be safe (>4G could be fine with 64 bit but who knows)
-        MemoryType::LOADER_DATA,
-        count + PAGES_FOR_2M,
-    ) {
-        Ok(dst) => {
-            let dst = (dst.as_ptr() as u64 - 1) / TWO_MEGABYTE + TWO_MEGABYTE; // round to 2M
-
-            unsafe {
-                core::ptr::write_bytes(dst as *mut u64, 0, 4096 * count); // zero out pages
-            }
-            dst
-        }
-        Err(err) => {
-            println!("Error: failed to allocate pages due to error: {}", err);
-            0
-        }
-    }
-}
-
 pub fn allocate_low_pages(count: usize) -> u64 {
     match uefi::boot::allocate_pages(
         AllocateType::MaxAddress(0x100000),

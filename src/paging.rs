@@ -4,14 +4,14 @@ use crate::memory::*;
 
 const PRESENT: u64 = 1 << 0;
 const RW: u64 = 1 << 1;
-const USER_PAGE: u64 = 1 << 2;
-const WRITE_THROUGH: u64 = 1 << 3;
-const CACHE_DISABLE: u64 = 1 << 4;
-const ACCESSED: u64 = 1 << 5;
-const DIRTY: u64 = 1 << 6;
-const LARGE_PAGE: u64 = 1 << 7;
-const GLOBAL: u64 = 1 << 8;
-const EXECUTE_DISABLE: u64 = 1 << 63;
+const _USER_PAGE: u64 = 1 << 2;
+const _WRITE_THROUGH: u64 = 1 << 3;
+const _CACHE_DISABLE: u64 = 1 << 4;
+const _ACCESSED: u64 = 1 << 5;
+const _DIRTY: u64 = 1 << 6;
+const _LARGE_PAGE: u64 = 1 << 7;
+const _GLOBAL: u64 = 1 << 8;
+const _EXECUTE_DISABLE: u64 = 1 << 63;
 
 const PT_FLAGS: u64 = PRESENT | RW;
 const PD_FLAGS: u64 = PRESENT | RW;

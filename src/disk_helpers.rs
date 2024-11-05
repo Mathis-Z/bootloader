@@ -86,11 +86,8 @@ fn volume_name_from_root_dir(root_dir: &mut Directory) -> CString16 {
 }
 
 pub struct EFI {
-    pub file_system_handle: Handle,
     pub volume_name: CString16,
     pub file_path: CString16,
-    pub device_path_string: CString16,
-    pub device_path: Box<DevicePath>,
 }
 
 impl fmt::Display for EFI {
