@@ -15,7 +15,7 @@ use uefi_raw::protocol::{
 };
 use uefi_raw::Guid;
 
-pub fn print_handles(bs: &BootServices, search_type: SearchType) {
+pub fn print_handles(search_type: SearchType) {
     let handle_buffer = bs
         .locate_handle_buffer(search_type)
         .expect("Failed to enumerate handles!");
@@ -51,7 +51,7 @@ fn guid_to_protocol(guid: &Guid) -> Option<&str> {
     }
 }
 
-pub fn list_efi_partition_handles(bs: &BootServices) -> Vec<Handle> {
+pub fn list_efi_partition_handles() -> Vec<Handle> {
     let efi_part_handles = Vec::new();
 
     let fs_handles = bs

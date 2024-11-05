@@ -4,9 +4,9 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 use uefi::{
-    prelude::BootServices,
+    boot::MemoryType,
+    mem::memory_map::{MemoryMap, MemoryMapOwned},
     proto::console::gop::GraphicsOutput,
-    table::boot::{MemoryMap, MemoryType},
     CString16,
 };
 use uefi_raw::PhysicalAddress;
@@ -210,12 +210,10 @@ impl KernelParams {
         screen_info.orig_video_points = 16;
     }
 
-    fn get_screen_info(bs: &BootServices) -> (u32, u32) {
-        let gop_handle = bs.get_handle_for_protocol::<GraphicsOutput>().unwrap();
+    fn get_screen_info() -> (u32, u32) {
+        let gop_handle = uefi::boot::get_handle_for_protocol::<GraphicsOutput>().unwrap();
 
-        let binding = bs
-            .open_protocol_exclusive::<GraphicsOutput>(gop_handle)
-            .unwrap();
+        let binding = uefi::boot::open_protocol_exclusive::<GraphicsOutput>(gop_handle).unwrap();
         let gop = binding.get().unwrap();
 
         let mode_info = gop.current_mode_info();
@@ -225,7 +223,7 @@ impl KernelParams {
         )
     }
 
-    pub fn set_memory_map(zero_page: u64, mmap: &MemoryMap) {
+    pub fn set_memory_map(zero_page: u64, mmap: &MemoryMapOwned) {
         const MEMORY_MAX: u64 = 4 * 1024 * 1024 * 1024;
         const MAX_E820_ENTRIES: usize = 128;
 

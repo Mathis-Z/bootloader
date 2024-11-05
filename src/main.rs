@@ -12,30 +12,17 @@ mod memory;
 mod paging;
 mod shell;
 
-static mut global_system_table: Option<SystemTable<Boot>> = None;
 static mut global_image_handle: Option<Handle> = None;
-
-pub fn system_table() -> &'static mut SystemTable<Boot> {
-    unsafe { global_system_table.as_mut().unwrap() }
-}
-
-pub fn boot_services() -> &'static BootServices {
-    system_table().boot_services()
-}
 
 pub fn image_handle() -> &'static mut Handle {
     unsafe { global_image_handle.as_mut().unwrap() }
 }
 
 #[entry]
-fn main(image_handle: Handle, mut st: SystemTable<Boot>) -> Status {
-    uefi::helpers::init(&mut st).unwrap();
-    let _ = st.stdout().clear();
+fn main() -> Status {
+    uefi::helpers::init().unwrap();
 
-    unsafe {
-        global_system_table = Some(st);
-        global_image_handle = Some(image_handle)
-    }
+    let _ = system::with_stdout(|stdout| stdout.clear());
 
     Shell::new().enter();
 

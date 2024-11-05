@@ -4,13 +4,14 @@ use alloc::{
     string::{String, ToString},
     vec::Vec,
 };
+use disk_helpers::{fs_handle_by_name, get_device_path_for_file, open_fs_handle, start_efi};
 use uefi::{
     data_types::EqStrUntilNul,
     fs::{FileSystem, Path, PathBuf},
     println, CString16, Char16,
 };
 
-use crate::{disk_helpers::*, kernel_loading::Kernel, *};
+use crate::{kernel_loading::Kernel, *};
 
 pub enum Program {
     HELP,
@@ -104,7 +105,7 @@ impl Command {
             None => {
                 if param.is_empty() {
                     shell.println("The following FAT volumes are available:");
-                    for volume_name in disk_helpers::get_volume_names(boot_services()) {
+                    for volume_name in disk_helpers::get_volume_names() {
                         shell.print("- ");
                         shell.println(&volume_name);
                     }
@@ -115,9 +116,7 @@ impl Command {
                     if let Some(volume_name) = path_components.next() {
                         let mut result;
 
-                        if let Some(mut fs) =
-                            disk_helpers::open_volume_by_name(boot_services(), &volume_name)
-                        {
+                        if let Some(mut fs) = disk_helpers::open_volume_by_name(&volume_name) {
                             let mut rest_path = CString16::new();
 
                             for component in path_components {
@@ -138,7 +137,7 @@ impl Command {
                 }
             }
             Some(fs_handle) => {
-                if let Some(mut fs) = open_fs_handle(boot_services(), fs_handle) {
+                if let Some(mut fs) = open_fs_handle(fs_handle) {
                     let s = Command::ls_fs(&mut fs, &shell.cwd, &param);
                     println!("{}", s);
                 } else {
@@ -189,10 +188,7 @@ impl Command {
     }
 
     fn clear(&mut self, shell: &mut Shell) {
-        if let Err(err) = system_table().stdout().clear() {
-            shell.print("Could not clear shell because of error: ");
-            shell.debug_println(&err);
-        }
+        let _ = system::with_stdout(|stdout| stdout.clear());
     }
 
     fn exit(&mut self, shell: &mut Shell) {
@@ -200,7 +196,7 @@ impl Command {
     }
 
     fn print_mmap(&mut self, shell: &mut Shell) {
-        memory::print_memory_map(boot_services()); // ugly because it does not print using the shell
+        memory::print_memory_map(); // ugly because it does not print using the shell
     }
 
     fn cd(&mut self, shell: &mut Shell) {
@@ -221,7 +217,7 @@ impl Command {
                     let joined_path_string = Command::joined_paths(&shell.cwd, param);
                     let joined_path = Path::new(&joined_path_string);
 
-                    if let Some(mut fs) = open_fs_handle(boot_services(), &fs_handle) {
+                    if let Some(mut fs) = open_fs_handle(&fs_handle) {
                         match fs.read_dir(Path::new(&joined_path)) {
                             Ok(_) => {
                                 shell.cwd = joined_path_string;
@@ -242,12 +238,11 @@ impl Command {
                     shell.cwd = CString16::new();
                     shell.fs_handle = None;
 
-                    let bs = boot_services();
-                    let fs_handle = fs_handle_by_name(bs, &volume_name);
+                    let fs_handle = fs_handle_by_name(&volume_name);
 
                     match fs_handle {
                         Some(fs_handle) => {
-                            if let Some(mut fs) = open_fs_handle(bs, &fs_handle) {
+                            if let Some(mut fs) = open_fs_handle(&fs_handle) {
                                 let mut pathbuf = PathBuf::new();
                                 pathbuf.push(Path::new(&rest_path));
                                 let path = Path::new(pathbuf.to_cstr16());
@@ -282,7 +277,6 @@ impl Command {
             return;
         }
         let param = &self.args[0];
-        let bs = boot_services();
 
         match &shell.fs_handle {
             Some(fs_handle) => {
@@ -290,11 +284,10 @@ impl Command {
                 let joined_path = Path::new(&joined_path_string);
 
                 if let Some(device_path) = get_device_path_for_file(
-                    bs,
                     &fs_handle,
                     &joined_path.to_cstr16().try_into().unwrap(),
                 ) {
-                    start_efi(image_handle(), bs, &device_path);
+                    start_efi(image_handle(), &device_path);
                 } else {
                     println!(
                         "Could not get device path for file path {}",
@@ -304,7 +297,7 @@ impl Command {
             }
             None => {
                 if let Some((volume_name, rest_path)) = Command::parse_full_path(param) {
-                    let fs_handle = fs_handle_by_name(bs, &volume_name);
+                    let fs_handle = fs_handle_by_name(&volume_name);
 
                     match fs_handle {
                         Some(fs_handle) => {
@@ -313,11 +306,10 @@ impl Command {
                             let path = Path::new(pathbuf.to_cstr16());
 
                             if let Some(device_path) = get_device_path_for_file(
-                                bs,
                                 &fs_handle,
                                 &path.to_cstr16().try_into().unwrap(),
                             ) {
-                                start_efi(&image_handle(), bs, &device_path);
+                                start_efi(&image_handle(), &device_path);
                             } else {
                                 println!(
                                     "Could not get device path for file path {}",
@@ -352,7 +344,7 @@ impl Command {
             }
             None => {
                 if let Some((volume_name, rest_path)) = Command::parse_full_path(kernel_path) {
-                    let fs_handle = fs_handle_by_name(boot_services(), &volume_name);
+                    let fs_handle = fs_handle_by_name(&volume_name);
 
                     match fs_handle {
                         Some(fs_handle) => {

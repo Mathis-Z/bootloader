@@ -6,9 +6,8 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-log = "0.4.21"
-uefi = { version = "0.28.0", features = ["alloc", "global_allocator"]}
-uefi-raw = "0.5.2"
+uefi = { version = "0.33.0", features = ["alloc", "global_allocator"]}
+uefi-raw = "0.9.0"
 
 [profile.release]
 panic = 'abort'

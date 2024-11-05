@@ -1,7 +1,5 @@
 use core::{arch::asm, mem::size_of, slice};
 
-use uefi::{prelude::BootServices, println};
-
 use crate::memory::*;
 
 #[repr(C, packed)]

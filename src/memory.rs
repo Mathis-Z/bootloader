@@ -1,14 +1,12 @@
 extern crate alloc;
 
-use uefi::{prelude::*, println, table::boot::AllocateType};
-use uefi_raw::{table::boot::MemoryType, PhysicalAddress};
+use uefi::boot::AllocateType;
+use uefi::mem::memory_map::{MemoryMap, MemoryMapMut, MemoryType};
+use uefi::println;
+use uefi_raw::PhysicalAddress;
 
-use crate::boot_services;
-
-pub fn print_memory_map(bs: &BootServices) {
-    let mut buf: [u8; 20000] = [0; 20000];
-
-    match bs.memory_map(&mut buf) {
+pub fn print_memory_map() {
+    match uefi::boot::memory_map(MemoryType::LOADER_DATA) {
         Ok(mut memory_map) => {
             memory_map.sort();
             for md in memory_map.entries() {
@@ -26,16 +24,16 @@ pub fn print_memory_map(bs: &BootServices) {
 }
 
 pub fn allocate_pages(count: usize) -> u64 {
-    match boot_services().allocate_pages(
+    match uefi::boot::allocate_pages(
         AllocateType::MaxAddress(1 << 32), // stay under 4G to be safe (>4G could be fine with 64 bit but who knows)
         MemoryType::LOADER_DATA,
         count,
     ) {
-        Ok(dst) => {
+        Ok(mut dst) => {
             unsafe {
-                core::ptr::write_bytes(dst as *mut u8, 0, 4096 * count); // zero out pages
+                core::ptr::write_bytes(dst.as_mut(), 0, 4096 * count); // zero out pages
             }
-            dst
+            dst.as_ptr() as u64
         }
         Err(err) => {
             println!("Error: failed to allocate pages due to error: {}", err);
@@ -44,20 +42,20 @@ pub fn allocate_pages(count: usize) -> u64 {
     }
 }
 
-pub fn allocate_pages_aligned_to_2M(bs: &BootServices, count: usize) -> u64 {
+pub fn allocate_pages_aligned_to_2_m(count: usize) -> u64 {
     const TWO_MEGABYTE: u64 = 2 * 1024 * 1024 * 1024;
     const PAGES_FOR_2M: usize = (TWO_MEGABYTE / 4096) as usize;
 
-    match bs.allocate_pages(
+    match uefi::boot::allocate_pages(
         AllocateType::MaxAddress(1 << 32), // stay under 4G to be safe (>4G could be fine with 64 bit but who knows)
         MemoryType::LOADER_DATA,
         count + PAGES_FOR_2M,
     ) {
         Ok(dst) => {
-            let dst = (dst - 1) / TWO_MEGABYTE + TWO_MEGABYTE; // round to 2M
+            let dst = (dst.as_ptr() as u64 - 1) / TWO_MEGABYTE + TWO_MEGABYTE; // round to 2M
 
             unsafe {
-                core::ptr::write_bytes(dst as *mut u8, 0, 4096 * count); // zero out pages
+                core::ptr::write_bytes(dst as *mut u64, 0, 4096 * count); // zero out pages
             }
             dst
         }
@@ -69,16 +67,16 @@ pub fn allocate_pages_aligned_to_2M(bs: &BootServices, count: usize) -> u64 {
 }
 
 pub fn allocate_low_pages(count: usize) -> u64 {
-    match boot_services().allocate_pages(
+    match uefi::boot::allocate_pages(
         AllocateType::MaxAddress(0x100000),
         MemoryType::LOADER_DATA,
         count,
     ) {
-        Ok(dst) => {
+        Ok(mut dst) => {
             unsafe {
-                core::ptr::write_bytes(dst as *mut u8, 0, 4096 * count); // zero out pages
+                core::ptr::write_bytes(dst.as_mut(), 0, 4096 * count); // zero out pages
             }
-            dst
+            dst.as_ptr() as u64
         }
         Err(err) => {
             println!("Error: failed to allocate pages due to error: {}", err);

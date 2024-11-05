@@ -3,17 +3,10 @@ extern crate alloc;
 use core::arch::asm;
 
 use alloc::vec::Vec;
-use uefi::{
-    fs::{FileSystem, Path},
-    helpers::system_table,
-    prelude::*,
-    println, CString16,
-};
-use uefi_raw::table::boot::MemoryType;
+use uefi::boot::MemoryType;
+use uefi::{fs::Path, prelude::*, println, CString16};
 
-use crate::{
-    boot_services, gdt::*, global_system_table, image_handle, kernel_params, memory::*, paging::*,
-};
+use crate::{gdt::*, kernel_params, memory::*, paging::*};
 
 use kernel_params::*;
 
@@ -24,7 +17,7 @@ pub struct Kernel {
 
 impl Kernel {
     pub fn load_and_start(cmdline: &CString16, fs_handle: &Handle, path: &CString16) {
-        if let Some(mut kernel) = Kernel::load_from(boot_services(), fs_handle, path) {
+        if let Some(mut kernel) = Kernel::load_from(fs_handle, path) {
             if !kernel.check_magic_number() {
                 println!("Kernel image does not start with MZ magic number!");
             }
@@ -39,10 +32,10 @@ impl Kernel {
         return self.blob[0] == 0x4d || self.blob[1] == 0x5a;
     }
 
-    pub fn load_from(bs: &BootServices, fs_handle: &Handle, path: &CString16) -> Option<Kernel> {
+    pub fn load_from(fs_handle: &Handle, path: &CString16) -> Option<Kernel> {
         println!("Loading kernel...");
 
-        let Some(mut fs) = crate::disk_helpers::open_fs_handle(bs, fs_handle) else {
+        let Some(mut fs) = crate::disk_helpers::open_fs_handle(fs_handle) else {
             return None;
         };
 
@@ -74,8 +67,8 @@ impl Kernel {
 
         Kernel::jump_to_efi_entry(
             entry_point_efi_64bit,
-            image_handle().as_ptr() as u64,
-            system_table().as_ptr() as u64,
+            uefi::boot::image_handle().as_ptr() as u64,
+            uefi::table::system_table_raw().unwrap().as_ptr() as u64,
             zero_page_addr,
         );
     }
@@ -144,10 +137,7 @@ impl Kernel {
         println!("Exiting boot services. Goodbye");
 
         unsafe {
-            let (_runtime_st, old_mmap) = global_system_table
-                .take()
-                .unwrap()
-                .exit_boot_services(MemoryType::LOADER_DATA);
+            let old_mmap = uefi::boot::exit_boot_services(MemoryType::LOADER_DATA);
 
             KernelParams::set_memory_map(zero_page_addr, &old_mmap);
             create_and_set_simple_gdt(gdt_page);

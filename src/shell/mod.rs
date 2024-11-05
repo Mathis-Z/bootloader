@@ -3,16 +3,13 @@ extern crate alloc;
 use alloc::vec::Vec;
 
 use uefi::{
-    helpers::system_table,
     println,
     proto::console::text::{Key, ScanCode},
-    table::{Boot, SystemTable},
     CString16, Char16, Handle,
 };
 
-use core::fmt::Debug;
 use core::fmt::Display;
-use core::fmt::Write;
+use core::fmt::{Debug, Write};
 
 use self::commands::{Command, Program};
 
@@ -58,7 +55,7 @@ impl Shell {
         }
         .execute(self);
 
-        let _ = system_table().stdout().enable_cursor(true);
+        let _ = uefi::system::with_stdout(|stdout| stdout.enable_cursor(true));
 
         while !self.exit {
             self.print_shell();
@@ -73,7 +70,7 @@ impl Shell {
         self.cmd_history_idx = self.cmd_history.len();
 
         loop {
-            let key = system_table().stdin().read_key().expect("Expected input");
+            let key = uefi::system::with_stdin(|stdin| stdin.read_key().expect("Expected input"));
             match key {
                 Some(k) => {
                     match k {
@@ -136,15 +133,15 @@ impl Shell {
     }
 
     pub fn print<T: Display + ?Sized>(&mut self, text: &T) {
-        write!(system_table().stdout(), "{}", text).expect("Write failed");
+        uefi::system::with_stdout(|stdout| write!(stdout, "{}", text).expect("Write failed"));
     }
 
     pub fn println<T: Display + ?Sized>(&mut self, text: &T) {
-        write!(system_table().stdout(), "{}\n", text).expect("Write failed");
+        uefi::system::with_stdout(|stdout| write!(stdout, "{}\n", text).expect("Write failed"));
     }
 
     pub fn debug_println<T: Debug>(&mut self, text: &T) {
-        write!(system_table().stdout(), "{:?}\n", text).expect("Write failed");
+        uefi::system::with_stdout(|stdout| write!(stdout, "{:?}\n", text).expect("Write failed"));
     }
 
     pub fn print_shell(&mut self) {
