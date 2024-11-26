@@ -10,7 +10,7 @@ run: build
 		-drive if=pflash,format=raw,readonly=on,file=qemu/x86/OVMF_CODE.fd \
 		-drive if=pflash,format=raw,readonly=on,file=qemu/x86/OVMF_VARS.fd \
 		-drive format=raw,file=fat:rw:qemu/x86/esp \
-		-drive format=vdi,file="/home/mathisz/VirtualBox VMs/ubuntu/test.vdi"
+		-drive format=vdi,file="/home/mathisz/VirtualBox VMs/ubuntu/test.vdi" \
 
 
 debug: build

@@ -8,6 +8,7 @@ mod disk_helpers;
 mod kernel;
 mod mem;
 mod shell;
+mod simple_error;
 
 #[entry]
 fn main() -> Status {
