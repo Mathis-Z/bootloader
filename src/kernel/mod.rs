@@ -35,7 +35,7 @@ impl Kernel {
     pub fn load_from(fs_handle: &Handle, path: &CString16) -> Option<Kernel> {
         println!("Loading kernel...");
 
-        let Some(mut fs) = crate::disk_helpers::open_fs_handle(fs_handle) else {
+        let Some(mut fs) = crate::disk::open_fs_handle(fs_handle) else {
             return None;
         };
 

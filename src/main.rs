@@ -4,7 +4,7 @@
 use shell::*;
 use uefi::prelude::*;
 
-mod disk_helpers;
+mod disk;
 mod kernel;
 mod mem;
 mod shell;

@@ -1,10 +1,10 @@
 extern crate alloc;
 
+use crate::disk::{fs_handle_by_name, get_device_path_for_file, open_fs_handle, start_efi};
 use alloc::{
     string::{String, ToString},
     vec::Vec,
 };
-use disk_helpers::{fs_handle_by_name, get_device_path_for_file, open_fs_handle, start_efi};
 use uefi::{
     data_types::EqStrUntilNul,
     fs::{FileSystem, Path, PathBuf},
@@ -105,7 +105,7 @@ impl Command {
             None => {
                 if param.is_empty() {
                     shell.println("The following FAT volumes are available:");
-                    for volume_name in disk_helpers::get_volume_names() {
+                    for volume_name in crate::disk::get_volume_names() {
                         shell.print("- ");
                         shell.println(&volume_name);
                     }
@@ -116,7 +116,7 @@ impl Command {
                     if let Some(volume_name) = path_components.next() {
                         let mut result;
 
-                        if let Some(mut fs) = disk_helpers::open_volume_by_name(&volume_name) {
+                        if let Some(mut fs) = crate::disk::open_volume_by_name(&volume_name) {
                             let mut rest_path = CString16::new();
 
                             for component in path_components {

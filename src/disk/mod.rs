@@ -1,8 +1,11 @@
 extern crate alloc;
 
+use core::fmt::write;
+
 use alloc::{boxed::Box, fmt, format, vec::Vec};
 
 use ext4_view::{Ext4, Ext4Error, Ext4Read};
+use fs::Filesystem;
 use uefi::boot::{self, image_handle, LoadImageSource, OpenProtocolParams, ScopedProtocol};
 use uefi::fs::FileSystem;
 use uefi::proto::media::disk::DiskIo;
@@ -25,6 +28,8 @@ use uefi::{
 };
 
 use crate::simple_error::SimpleError;
+
+mod fs;
 
 pub fn get_volume_names() -> Vec<CString16> {
     let handles =
@@ -178,10 +183,31 @@ impl fmt::Display for Drive {
 }
 
 pub struct Partition {
-    pub drive_idx: u8,
-    pub idx: u8,
-    pub medium: Medium,
-    pub format: PartitionFormat,
+    drive_idx: u8,
+    idx: u8,
+    medium: Medium,
+    fs_type: FsType,
+}
+
+#[derive(Copy, Clone)]
+pub enum FsType {
+    Ext4,
+    Fat,
+    Unknown,
+}
+
+impl core::fmt::Display for FsType {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Self::Ext4 => "EXT4",
+                Self::Fat => "FAT",
+                Self::Unknown => "Unknown",
+            }
+        )
+    }
 }
 
 impl Partition {
@@ -191,6 +217,10 @@ impl Partition {
         )
         .unwrap()
     }
+
+    pub fn format(&self) -> FsType {
+        self.fs_type
+    }
 }
 
 impl fmt::Display for Partition {
@@ -199,7 +229,7 @@ impl fmt::Display for Partition {
             f,
             "{} format: {}, size: {}",
             self.linux_name(),
-            self.format,
+            self.format(),
             self.medium.human_readable_size()
         )
     }
@@ -231,22 +261,6 @@ impl Medium {
             .as_str(),
         )
         .unwrap()
-    }
-}
-
-pub enum PartitionFormat {
-    Ext4, // ext4
-    Fat,  // any of the fat systems supported by UEFI (fat16, fat24, fat32)
-    Unknown,
-}
-
-impl fmt::Display for PartitionFormat {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Self::Ext4 => write!(f, "EXT4"),
-            Self::Fat => write!(f, "FAT"),
-            Self::Unknown => write!(f, "Unknown"),
-        }
     }
 }
 
@@ -303,7 +317,7 @@ pub fn get_drives() -> Vec<Drive> {
             let part = Partition {
                 drive_idx: parent_drive.idx,
                 idx,
-                format: determine_partition_format(medium),
+                fs_type: detect_filesystem_format(medium),
                 medium,
             };
 
@@ -390,15 +404,25 @@ pub fn supports_protocol<P: ProtocolPointer>(handle: Handle) -> bool {
     .unwrap()
 }
 
-pub fn determine_partition_format(medium: Medium) -> PartitionFormat {
-    if supports_protocol::<SimpleFileSystem>(medium.handle) {
-        return PartitionFormat::Fat;
+pub fn get_fs(medium: Medium) -> Option<Box<dyn Filesystem>> {
+    if let Ok(sfs) = open_protocol_unsafe::<SimpleFileSystem>(medium.handle) {
+        return Some(Box::new(sfs));
     }
 
-    match Ext4::load(Box::new(medium)) {
-        // Ext4Error::Incompatible here means it is ext4 with some features not supported by the ext4_view crate
-        Ok(_) | Err(Ext4Error::Incompatible(_)) => PartitionFormat::Ext4,
-        _ => PartitionFormat::Unknown,
+    if let Ok(ext) = Ext4::load(Box::new(medium)) {
+        return Some(Box::new(ext));
+    }
+
+    None
+}
+
+pub fn detect_filesystem_format(medium: Medium) -> FsType {
+    if supports_protocol::<SimpleFileSystem>(medium.handle) {
+        FsType::Ext4
+    } else if let Ok(_) = Ext4::load(Box::new(medium)) {
+        FsType::Fat
+    } else {
+        FsType::Unknown
     }
 }
 
