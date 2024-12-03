@@ -5,11 +5,13 @@ use alloc::vec::Vec;
 use uefi::{
     println,
     proto::console::text::{Key, ScanCode},
-    CString16, Char16, Handle,
+    CString16, Char16,
 };
 
 use core::fmt::Display;
 use core::fmt::Write;
+
+use crate::disk::fs::FsPath;
 
 use self::commands::{Command, Program};
 
@@ -32,16 +34,14 @@ macro_rules! Char16 {
 pub struct Shell {
     cmd_history_idx: usize,
     cmd_history: Vec<CString16>,
-    fs_handle: Option<Handle>,
-    cwd: CString16,
+    cwd: FsPath,
     pub exit: bool,
 }
 
 impl Shell {
     pub fn new() -> Shell {
         Shell {
-            fs_handle: None,
-            cwd: CString16::new(),
+            cwd: FsPath::new(),
             cmd_history_idx: 0,
             cmd_history: Vec::new(),
             exit: false,
@@ -49,11 +49,14 @@ impl Shell {
     }
 
     pub fn enter(&mut self) {
-        Command {
+        if let Err(error) = (Command {
             program: Program::HELP,
             args: Vec::new(),
+        })
+        .execute(self)
+        {
+            println!("{error}");
         }
-        .execute(self);
 
         let _ = uefi::system::with_stdout(|stdout| stdout.enable_cursor(true));
 
@@ -156,7 +159,9 @@ impl Shell {
             self.cmd_history.push(command.clone());
         }
         if let Some(mut parsed_cmd) = self.parse_command(&command) {
-            parsed_cmd.execute(self);
+            if let Err(error) = parsed_cmd.execute(self) {
+                println!("{error}");
+            }
         }
     }
 

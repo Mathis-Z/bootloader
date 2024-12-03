@@ -1,15 +1,13 @@
 extern crate alloc;
 
-use crate::disk::{fs_handle_by_name, get_device_path_for_file, open_fs_handle, start_efi};
-use alloc::{
-    string::{String, ToString},
-    vec::Vec,
-};
-use uefi::{
-    data_types::EqStrUntilNul,
-    fs::{FileSystem, Path, PathBuf},
-    println, CString16, Char16,
-};
+use crate::disk::get_device_path_for_file;
+use crate::simple_error::simple_error;
+use alloc::{string::String, vec::Vec};
+use boot::{image_handle, LoadImageSource};
+use disk::fs::{FileError, FsPath};
+use disk::{get_drives, Partition};
+use simple_error::SimpleResult;
+use uefi::{data_types::EqStrUntilNul, println, CString16};
 
 use crate::{kernel::Kernel, *};
 
@@ -59,7 +57,7 @@ impl Program {
 }
 
 impl Command {
-    pub fn execute(&mut self, shell: &mut Shell) {
+    pub fn execute(&mut self, shell: &mut Shell) -> SimpleResult<()> {
         match self.program {
             Program::HELP => self.help(shell),
             Program::EXIT => self.exit(shell),
@@ -72,7 +70,7 @@ impl Command {
         }
     }
 
-    fn help(&mut self, shell: &mut Shell) {
+    fn help(&mut self, shell: &mut Shell) -> SimpleResult<()> {
         shell.println("This is the Yannik & Mathis boot shell :)\nAvailable commands are:");
         for program in [
             Program::HELP,
@@ -87,340 +85,185 @@ impl Command {
             shell.print("- ");
             shell.println(&program.name());
         }
+
+        Ok(())
     }
 
-    fn ls(&mut self, shell: &mut Shell) {
+    fn ls(&mut self, shell: &mut Shell) -> SimpleResult<()> {
+        let mut path = shell.cwd.clone();
+
         if self.args.len() > 1 {
-            shell.println("ls takes at most one parameter");
-            return;
+            return simple_error!("ls needs 0 or 1 arguments");
+        } else if self.args.len() == 1 {
+            path.push(&self.args[0]);
         }
 
-        let param = &mut CString16::new();
-        if let Some(arg) = self.args.first() {
-            param.push_str(arg);
-        }
-        param.replace_char(Char16!('/'), Char16!('\\')); // translate UNIX-like forward slashes
+        if let Some(partition_name) = path.components.first() {
+            let Some(mut partition) = Partition::find_by_name(partition_name) else {
+                return simple_error!("No partition with the name {partition_name} was found.");
+            };
 
-        match &mut shell.fs_handle {
-            None => {
-                if param.is_empty() {
-                    shell.println("The following FAT volumes are available:");
-                    for volume_name in crate::disk::get_volume_names() {
-                        shell.print("- ");
-                        shell.println(&volume_name);
+            let Some(fs) = partition.fs() else {
+                return simple_error!("The partition's filesystem could not be read.");
+            };
+
+            match fs.read_directory(path.path_on_partition()) {
+                Err(FileError::NotADirectory) => simple_error!("{path} is not a directory"),
+                Err(FileError::NotFound) => simple_error!("{path} not found."),
+                Err(_) => simple_error!("An error occurred."),
+                Ok(directory) => {
+                    for file in directory.files() {
+                        shell.println(file);
                     }
-                } else {
-                    let path = Path::new(param);
-                    let mut path_components = path.components();
-
-                    if let Some(volume_name) = path_components.next() {
-                        let mut result;
-
-                        if let Some(mut fs) = crate::disk::open_volume_by_name(&volume_name) {
-                            let mut rest_path = CString16::new();
-
-                            for component in path_components {
-                                rest_path.push(Char16!('\\'));
-                                rest_path.push_str(&component);
-                            }
-
-                            result = Command::ls_fs(&mut fs, &CString16::new(), &rest_path);
-                        } else {
-                            result = CString16::try_from("Error: Could not open volume with name ")
-                                .unwrap();
-                            result.push_str(&volume_name);
-                        }
-                        shell.println(&result);
-                    } else {
-                        shell.println("Error: Could not get volume name from the path you entered");
-                    }
+                    Ok(())
                 }
             }
-            Some(fs_handle) => {
-                if let Some(mut fs) = open_fs_handle(fs_handle) {
-                    let s = Command::ls_fs(&mut fs, &shell.cwd, &param);
-                    println!("{}", s);
-                } else {
-                    println!("Error: Failed to open FS handle!");
+        } else {
+            for drive in get_drives() {
+                for partition in drive.partitions {
+                    println!("{partition}")
                 }
             }
+            Ok(())
         }
     }
 
-    fn ls_fs(fs: &mut FileSystem, cwd: &CString16, path: &CString16) -> CString16 {
-        let mut output = CString16::new();
-
-        let mut full_path = CString16::new();
-        full_path.push_str(cwd);
-        full_path.push_str(path);
-
-        output.push_str(&full_path);
-        output.push_str(&CString16::try_from("\n").unwrap());
-
-        match fs.read_dir(Path::new(&full_path)) {
-            Ok(contents) => {
-                for fileinfo_result in contents {
-                    match fileinfo_result {
-                        Ok(fileinfo) => {
-                            output.push_str(&fileinfo.file_name());
-                            if fileinfo.is_directory() {
-                                output.push(Char16::try_from('/').unwrap())
-                            }
-                            output.push(Char16::try_from('\n').unwrap())
-                        }
-                        Err(err) => {
-                            output.push_str(
-                                &CString16::try_from("Could not get file info: ").unwrap(),
-                            );
-                            output
-                                .push_str(&CString16::try_from(err.to_string().as_str()).unwrap());
-                        }
-                    }
-                }
-            }
-            Err(err) => {
-                output.push_str(&CString16::try_from("Could not read directory: ").unwrap());
-                output.push_str(&CString16::try_from(err.to_string().as_str()).unwrap());
-            }
-        }
-
-        output
-    }
-
-    fn clear(&mut self, _shell: &mut Shell) {
+    fn clear(&mut self, _shell: &mut Shell) -> SimpleResult<()> {
         let _ = system::with_stdout(|stdout| stdout.clear());
+        Ok(())
     }
 
-    fn exit(&mut self, shell: &mut Shell) {
+    fn exit(&mut self, shell: &mut Shell) -> SimpleResult<()> {
         shell.exit = true;
+        Ok(())
     }
 
-    fn print_mmap(&mut self, _shell: &mut Shell) {
-        crate::mem::print_memory_map(); // ugly because it does not print using the shell
+    fn print_mmap(&mut self, _shell: &mut Shell) -> SimpleResult<()> {
+        crate::mem::print_memory_map();
+        Ok(())
     }
 
-    fn cd(&mut self, shell: &mut Shell) {
+    fn cd(&mut self, shell: &mut Shell) -> SimpleResult<()> {
         if self.args.len() != 1 {
-            shell.println("cd needs one argument");
-            return;
+            return simple_error!("cd needs one argument");
         }
-        let param = &self.args[0];
 
-        match &shell.fs_handle {
-            Some(fs_handle) => {
-                if *param == CString16::try_from("..").unwrap()
-                    && shell.cwd == CString16::try_from("\\").unwrap()
-                {
-                    shell.fs_handle = None;
-                    shell.cwd = CString16::new();
-                } else {
-                    let joined_path_string = Command::joined_paths(&shell.cwd, param);
-                    let joined_path = Path::new(&joined_path_string);
+        let mut path = shell.cwd.clone();
+        path.push(&self.args[0]);
 
-                    if let Some(mut fs) = open_fs_handle(&fs_handle) {
-                        match fs.read_dir(Path::new(&joined_path)) {
-                            Ok(_) => {
-                                shell.cwd = joined_path_string;
-                            }
-                            Err(err) => {
-                                println!("Could not open dir because of error: {}", err);
-                            }
-                        }
-                    } else {
-                        println!("Failed to open FS handle!");
-                        shell.fs_handle = None;
-                        shell.cwd = CString16::new();
-                    }
-                }
-            }
-            None => {
-                if let Some((volume_name, rest_path)) = Command::parse_full_path(param) {
-                    shell.cwd = CString16::new();
-                    shell.fs_handle = None;
+        let Some(partition_name) = path.components.first() else {
+            shell.cwd = FsPath::new();
+            return Ok(());
+        };
 
-                    let fs_handle = fs_handle_by_name(&volume_name);
+        let Some(mut partition) = Partition::find_by_name(partition_name) else {
+            return simple_error!("No partition with the name {partition_name} was found.");
+        };
 
-                    match fs_handle {
-                        Some(fs_handle) => {
-                            if let Some(mut fs) = open_fs_handle(&fs_handle) {
-                                let mut pathbuf = PathBuf::new();
-                                pathbuf.push(Path::new(&rest_path));
-                                let path = Path::new(pathbuf.to_cstr16());
+        let Some(fs) = partition.fs() else {
+            return simple_error!("The partition's filesystem could not be read.");
+        };
 
-                                match fs.read_dir(path) {
-                                    Ok(_) => {
-                                        shell.cwd = rest_path;
-                                        shell.fs_handle = Some(fs_handle);
-                                    }
-                                    Err(err) => {
-                                        println!("Could not open dir because of error: {}", err);
-                                    }
-                                }
-                            } else {
-                                println!("Failed to open FS handle!");
-                            }
-                        }
-                        None => {
-                            println!("Failed to get handle for FS with name {}", volume_name);
-                        }
-                    }
-                } else {
-                    println!("Could not parse volume name and path from: {}", param);
-                }
+        match fs.read_directory(path.path_on_partition()) {
+            Err(FileError::NotADirectory) => simple_error!("{path} is not a directory"),
+            Err(FileError::NotFound) => simple_error!("{path} not found."),
+            Err(_) => simple_error!("An error occurred."),
+            Ok(_) => {
+                shell.cwd = path;
+                Ok(())
             }
         }
     }
 
-    pub fn run_efi(&mut self, shell: &mut Shell) {
+    pub fn run_efi(&mut self, shell: &mut Shell) -> SimpleResult<()> {
         if self.args.len() != 1 {
-            shell.println("run_efi needs one argument");
-            return;
+            return simple_error!("run_efi needs one argument");
         }
-        let param = &self.args[0];
 
-        match &shell.fs_handle {
-            Some(fs_handle) => {
-                let joined_path_string = Command::joined_paths(&shell.cwd, param);
-                let joined_path = Path::new(&joined_path_string);
+        let mut path = shell.cwd.clone();
+        path.push(&self.args[0]);
 
-                if let Some(device_path) = get_device_path_for_file(
-                    &fs_handle,
-                    &joined_path.to_cstr16().try_into().unwrap(),
+        let Some(partition_name) = path.components.first() else {
+            return simple_error!("/ is not an EFI -.-");
+        };
+
+        let Some(mut partition) = Partition::find_by_name(partition_name) else {
+            return simple_error!("No partition with the name {partition_name} was found.");
+        };
+
+        let Some(fs) = partition.fs() else {
+            return simple_error!("The partition's filesystem could not be read.");
+        };
+
+        match fs.read_file(path.path_on_partition()) {
+            Err(FileError::NotAFile) => simple_error!("{path} is not a file"),
+            Err(FileError::NotFound) => simple_error!("{path} not found."),
+            Err(_) => simple_error!("An error occurred."),
+            Ok(data) => {
+                let file_dpath = get_device_path_for_file(&partition.medium().handle, &path.into());
+
+                if file_dpath.is_none() {
+                    println!("Could not get device path for the file. Starting the EFI might work anyway.");
+                }
+
+                match uefi::boot::load_image(
+                    image_handle(),
+                    LoadImageSource::FromBuffer {
+                        buffer: data.as_slice(),
+                        file_path: file_dpath.as_deref(),
+                    },
                 ) {
-                    start_efi(&boot::image_handle(), &device_path);
-                } else {
-                    println!(
-                        "Could not get device path for file path {}",
-                        joined_path_string
-                    );
-                }
-            }
-            None => {
-                if let Some((volume_name, rest_path)) = Command::parse_full_path(param) {
-                    let fs_handle = fs_handle_by_name(&volume_name);
+                    Ok(loaded_image) => {
+                        println!("Starting image...\n\n");
+                        uefi::boot::stall(1_500_000); // time to read logs
 
-                    match fs_handle {
-                        Some(fs_handle) => {
-                            let mut pathbuf = PathBuf::new();
-                            pathbuf.push(Path::new(&rest_path));
-                            let path = Path::new(pathbuf.to_cstr16());
-
-                            if let Some(device_path) = get_device_path_for_file(
-                                &fs_handle,
-                                &path.to_cstr16().try_into().unwrap(),
-                            ) {
-                                start_efi(&boot::image_handle(), &device_path);
-                            } else {
-                                println!(
-                                    "Could not get device path for file path {}",
-                                    path.to_cstr16()
-                                );
-                            }
-                        }
-                        None => {
-                            println!("Failed to get handle for FS with name {}", volume_name);
+                        if let Err(err) = uefi::boot::start_image(loaded_image) {
+                            return simple_error!("Could not start EFI because of an error: {err}");
+                        } else {
+                            println!("The EFI application exited");
                         }
                     }
-                } else {
-                    println!("Could not parse volume name and path from: {}", param);
+                    Err(err) => {
+                        return simple_error!(
+                            "Failed to load EFI image into buffer because of: {err}"
+                        )
+                    }
                 }
+
+                Ok(())
             }
         }
     }
 
-    pub fn run_kernel(&mut self, shell: &mut Shell) {
+    pub fn run_kernel(&mut self, shell: &mut Shell) -> SimpleResult<()> {
         if self.args.len() != 2 {
-            shell.println("runkernel needs two arguments");
-            return;
+            return simple_error!("runkernel needs two arguments");
         }
-        let kernel_path = &self.args[0];
+
+        let mut path = shell.cwd.clone();
+        path.push(&self.args[0]);
         let kernel_cmdline = &self.args[1];
 
-        match &shell.fs_handle {
-            Some(fs_handle) => {
-                let joined_path_string = Command::joined_paths(&shell.cwd, kernel_path);
+        let Some(partition_name) = path.components.first() else {
+            return simple_error!("/ is not a kernel -.-");
+        };
 
-                Kernel::load_and_start(kernel_cmdline, fs_handle, &joined_path_string);
-            }
-            None => {
-                if let Some((volume_name, rest_path)) = Command::parse_full_path(kernel_path) {
-                    let fs_handle = fs_handle_by_name(&volume_name);
+        let Some(mut partition) = Partition::find_by_name(partition_name) else {
+            return simple_error!("No partition with the name {partition_name} was found.");
+        };
 
-                    match fs_handle {
-                        Some(fs_handle) => {
-                            let mut pathbuf = PathBuf::new();
-                            pathbuf.push(Path::new(&rest_path));
-                            let path = Path::new(pathbuf.to_cstr16());
+        let Some(fs) = partition.fs() else {
+            return simple_error!("The partition's filesystem could not be read.");
+        };
 
-                            Kernel::load_and_start(
-                                kernel_cmdline,
-                                &fs_handle,
-                                &path.to_cstr16().try_into().unwrap(),
-                            );
-                        }
-                        None => {
-                            println!("Failed to get handle for FS with name {}", volume_name);
-                        }
-                    }
-                } else {
-                    println!("Could not parse volume name and path from: {}", kernel_path);
-                }
+        match fs.read_file(path.path_on_partition()) {
+            Err(FileError::NotAFile) => simple_error!("{path} is not a file"),
+            Err(FileError::NotFound) => simple_error!("{path} not found."),
+            Err(_) => simple_error!("An error occurred."),
+            Ok(data) => {
+                Kernel::new(data)?.start(kernel_cmdline);
+                Ok(())
             }
         }
-    }
-
-    pub fn parse_full_path(string: &CString16) -> Option<(CString16, CString16)> {
-        let mut pathbuf = PathBuf::new();
-        pathbuf.push(Path::new(string));
-        let path = Path::new(pathbuf.to_cstr16());
-
-        let mut path_components = path.components();
-
-        if let Some(volume_name) = path_components.next() {
-            let mut rest_path = CString16::new();
-
-            for component in path_components {
-                rest_path.push(Char16!('\\'));
-                rest_path.push_str(&component);
-            }
-
-            Some((volume_name, rest_path))
-        } else {
-            None
-        }
-    }
-
-    pub fn joined_paths(a: &CString16, b: &CString16) -> CString16 {
-        let mut pathbuf = PathBuf::new();
-        pathbuf.push(Path::new(a));
-        let mut pathbuf_b = PathBuf::new();
-        pathbuf_b.push(Path::new(b));
-
-        for component in pathbuf_b.components() {
-            if component == CString16!("..") {
-                pathbuf = match pathbuf.parent() {
-                    Some(p) => p,
-                    None => PathBuf::new(),
-                }
-            } else if component != CString16!("")
-                && component != CString16!(" ")
-                && component != CString16!(".")
-            {
-                pathbuf.push(Path::new(&component));
-            }
-        }
-        if pathbuf.components().count() == 0 {
-            return CString16::try_from("\\").unwrap();
-        }
-
-        let mut output = CString16::new();
-
-        for component in pathbuf.components() {
-            if !component.is_empty() && component != CString16!("\\") {
-                output.push(Char16!('\\'));
-                output.push_str(&component);
-            }
-        }
-        output
     }
 }

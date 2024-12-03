@@ -1,10 +1,13 @@
 extern crate alloc;
 
+use core::fmt::Display;
+
 use alloc::vec::Vec;
 
 use ext4_view::{Ext4, Ext4Error};
 use uefi::boot::ScopedProtocol;
 use uefi::proto::media::file::FileMode;
+use uefi::{println, CStr16, Char16};
 use uefi::{
     proto::media::{
         file::{FileHandle, FileInfo},
@@ -14,12 +17,38 @@ use uefi::{
 };
 use uefi_raw::protocol::file_system::FileAttribute;
 
+use crate::disk::human_readable_size;
+use crate::simple_error::SimpleResult;
+
+use super::simple_error;
+
 // trait to abstract the ext4_view crate and uefi FAT driver into one interface
 pub trait Filesystem {
     fn read_file(&mut self, path: CString16) -> Result<Vec<u8>, FileError>;
     fn read_directory(&mut self, path: CString16) -> Result<Directory, FileError>;
+    fn format(&self) -> FsType;
 }
 
+#[derive(Copy, Clone)]
+pub enum FsType {
+    Ext4,
+    Fat,
+}
+
+impl core::fmt::Display for FsType {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Self::Ext4 => "EXT4",
+                Self::Fat => "FAT",
+            }
+        )
+    }
+}
+
+#[derive(Debug, Copy, Clone)]
 pub enum FileError {
     NotFound,
     NotAFile,
@@ -29,23 +58,155 @@ pub enum FileError {
 
 pub struct Directory {
     files: Vec<File>,
-    full_path: CString16,
-}
-
-impl Directory {
-    pub fn files(&self) -> &Vec<File> {
-        &self.files
-    }
-
-    pub fn full_path(&self) -> &CString16 {
-        &self.full_path
-    }
 }
 
 pub struct File {
     name: CString16,
     ftype: FileType,
     size: u64,
+}
+
+#[derive(Debug, Copy, Clone)]
+pub enum FileType {
+    File,
+    Directory,
+    Other,
+}
+
+// an absolute path beginning with the partition name
+#[derive(Debug, Clone)]
+pub struct FsPath {
+    pub components: Vec<CString16>,
+}
+
+impl FsPath {
+    pub fn new() -> FsPath {
+        FsPath {
+            components: Vec::new(),
+        }
+    }
+
+    fn parse_components(str: &CString16) -> (Vec<CString16>, bool) {
+        let separator: Char16 = Char16::try_from('/').unwrap();
+
+        let mut components = Vec::new();
+        let mut component = CString16::new();
+
+        if str.is_empty() {
+            return (Vec::new(), false);
+        }
+
+        let is_absolute = str.as_slice()[0] == separator;
+
+        for &char in str.iter() {
+            if char == separator {
+                if !component.is_empty() {
+                    components.push(component);
+                    component = CString16::new();
+                }
+            } else {
+                component.push(char);
+            }
+        }
+
+        if !component.is_empty() {
+            components.push(component);
+        }
+
+        (components, is_absolute)
+    }
+
+    pub fn parse(str: &CString16) -> SimpleResult<FsPath> {
+        let (components, is_absolute) = Self::parse_components(str);
+
+        if is_absolute {
+            simple_error!("Path is not absolute!")
+        } else {
+            Ok(FsPath { components })
+        }
+    }
+
+    fn merge_dots(&mut self) {
+        let dot = &CString16::try_from(".").unwrap();
+        let double_dot = &CString16::try_from("..").unwrap();
+
+        let mut new_components: Vec<CString16> = Vec::new();
+
+        for component in &self.components {
+            if component == dot {
+                continue; // remove all single dots
+            } else if component == double_dot {
+                if let Some(prev_component) = new_components.last() {
+                    if prev_component == double_dot {
+                        new_components.push(double_dot.clone()); // cannot merge ".." with "..", just append
+                    } else {
+                        new_components.pop(); // merge ".." with previous component by popping it
+                    }
+                } else {
+                    new_components.push(double_dot.clone());
+                }
+            } else {
+                new_components.push(component.clone());
+            }
+        }
+
+        self.components = new_components;
+        if self.components.first() == Some(double_dot) {
+            self.components = Vec::new(); // cannot go higher than root
+        }
+    }
+
+    pub fn push(&mut self, other: &CString16) {
+        if other.is_empty() {
+            return;
+        }
+
+        let (mut components, is_absolute) = Self::parse_components(other);
+
+        if is_absolute {
+            self.components = components;
+        } else {
+            self.components.append(&mut components);
+            self.merge_dots();
+        }
+    }
+
+    pub fn to_string(&self, from: usize) -> CString16 {
+        if from >= self.components.len() {
+            return CString16::try_from("/").unwrap();
+        }
+
+        let separator: Char16 = Char16::try_from('/').unwrap();
+
+        let mut out = CString16::new();
+
+        let mut first = true;
+        for component in &self.components[from..] {
+            if from == 0 || !first {
+                out.push(separator);
+            }
+            out.push_str(component);
+            first = false;
+        }
+
+        out
+    }
+
+    pub fn path_on_partition(&self) -> CString16 {
+        self.to_string(1)
+    }
+}
+
+impl Display for FsPath {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}", self.to_string(0))
+    }
+}
+
+impl From<FsPath> for CString16 {
+    fn from(value: FsPath) -> Self {
+        value.to_string(0)
+    }
 }
 
 impl File {
@@ -56,9 +217,22 @@ impl File {
     pub fn file_type(&self) -> &FileType {
         &self.ftype
     }
+}
 
-    pub fn size(&self) -> u64 {
-        self.size
+impl Display for File {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self.file_type() {
+                FileType::File => "-",
+                FileType::Directory => "d",
+                FileType::Other => "?",
+            }
+        )?;
+
+        write!(f, " {} {}", human_readable_size(self.size), self.name())?;
+        Ok(())
     }
 }
 
@@ -94,11 +268,10 @@ impl From<&FileInfo> for File {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
-pub enum FileType {
-    File,
-    Directory,
-    Other,
+impl Directory {
+    pub fn files(&self) -> &Vec<File> {
+        &self.files
+    }
 }
 
 impl From<ext4_view::FileType> for FileType {
@@ -112,7 +285,13 @@ impl From<ext4_view::FileType> for FileType {
 }
 
 impl Filesystem for Ext4 {
+    fn format(&self) -> FsType {
+        FsType::Ext4
+    }
+
     fn read_file(&mut self, path: CString16) -> Result<Vec<u8>, FileError> {
+        println!("reading {path}");
+
         match self.read(ext4_view::Path::new(path.as_bytes())) {
             Ok(data) => Ok(data),
             Err(error) => Err(match error {
@@ -124,9 +303,12 @@ impl Filesystem for Ext4 {
     }
 
     fn read_directory(&mut self, path: CString16) -> Result<Directory, FileError> {
+        println!("reading {path}");
+
         match self.read_dir(ext4_view::Path::new(path.as_bytes())) {
             Ok(dir) => {
                 let mut files: Vec<File> = Vec::new();
+                println!("read");
 
                 for dir_entry in dir.into_iter() {
                     let Ok(dir_entry) = dir_entry else {
@@ -139,11 +321,9 @@ impl Filesystem for Ext4 {
 
                     files.push(file);
                 }
+                println!("ok");
 
-                Ok(Directory {
-                    files,
-                    full_path: path,
-                })
+                Ok(Directory { files })
             }
             Err(error) => Err(match error {
                 Ext4Error::NotFound => FileError::NotFound,
@@ -156,6 +336,10 @@ impl Filesystem for Ext4 {
 
 // implementation for uefi FAT driver
 impl Filesystem for ScopedProtocol<SimpleFileSystem> {
+    fn format(&self) -> FsType {
+        FsType::Fat
+    }
+
     fn read_file(&mut self, path: CString16) -> Result<Vec<u8>, FileError> {
         let file_handle = uefi_get_file_handle(self, &path)?;
         let Some(mut file) = file_handle.into_regular_file() else {
@@ -204,10 +388,7 @@ impl Filesystem for ScopedProtocol<SimpleFileSystem> {
             }
         }
 
-        Ok(Directory {
-            files,
-            full_path: path,
-        })
+        Ok(Directory { files })
     }
 }
 
@@ -219,9 +400,12 @@ fn uefi_get_file_handle(
         return core::prelude::v1::Err(FileError::Other);
     };
 
+    let mut uefi_path = uefi::fs::PathBuf::new();
+    uefi_path.push(path.as_ref());
+
     match uefi::proto::media::file::File::open(
         &mut root_directory,
-        path,
+        uefi_path.to_cstr16(),
         FileMode::Read,
         FileAttribute::empty(),
     ) {

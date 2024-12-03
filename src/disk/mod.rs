@@ -1,16 +1,14 @@
 extern crate alloc;
 
-use core::fmt::write;
-
 use alloc::{boxed::Box, fmt, format, vec::Vec};
 
-use ext4_view::{Ext4, Ext4Error, Ext4Read};
+use crate::simple_error::simple_error;
+use ext4_view::{Ext4, Ext4Read};
 use fs::Filesystem;
-use uefi::boot::{self, image_handle, LoadImageSource, OpenProtocolParams, ScopedProtocol};
-use uefi::fs::FileSystem;
+use uefi::boot::{self, image_handle, OpenProtocolParams, ScopedProtocol};
 use uefi::proto::media::disk::DiskIo;
 use uefi::proto::media::partition::PartitionInfo;
-use uefi::proto::{media::block::BlockIO, BootPolicy, ProtocolPointer};
+use uefi::proto::{media::block::BlockIO, ProtocolPointer};
 use uefi::CString16;
 use uefi::{
     println,
@@ -19,81 +17,14 @@ use uefi::{
             text::{AllowShortcuts, DevicePathFromText, DisplayOnly},
             DevicePath,
         },
-        media::{
-            file::{Directory, File, FileSystemVolumeLabel},
-            fs::SimpleFileSystem,
-        },
+        media::fs::SimpleFileSystem,
     },
     Handle,
 };
 
-use crate::simple_error::SimpleError;
+use crate::simple_error::{self, SimpleError};
 
-mod fs;
-
-pub fn get_volume_names() -> Vec<CString16> {
-    let handles =
-        uefi::boot::find_handles::<SimpleFileSystem>().expect("Failed to get FS handles!");
-    let mut names = Vec::new();
-
-    for handle in handles {
-        names.push(get_volume_name(handle));
-    }
-    return names;
-}
-
-// TODO: Find better fallback name if volume label is empty
-pub fn get_volume_name(fs_handle: Handle) -> CString16 {
-    if let Ok(mut scoped_prot) = uefi::boot::open_protocol_exclusive::<SimpleFileSystem>(fs_handle)
-    {
-        if let Some(fs_protocol) = scoped_prot.get_mut() {
-            if let Ok(mut root_directory) = fs_protocol.open_volume() {
-                let volume_name = volume_name_from_root_dir(&mut root_directory);
-                if volume_name.is_empty() {
-                    return CString16::try_from(format!("{:?}", fs_handle.as_ptr()).as_str())
-                        .unwrap();
-                } else {
-                    return volume_name;
-                }
-            }
-        }
-    }
-
-    CString16::try_from("[Volume name error]").unwrap()
-}
-
-pub fn open_volume_by_name(name: &CString16) -> Option<FileSystem> {
-    if let Some(fs_handle) = fs_handle_by_name(name) {
-        return open_fs_handle(&fs_handle);
-    }
-    None
-}
-
-pub fn fs_handle_by_name(name: &CString16) -> Option<Handle> {
-    let handles =
-        uefi::boot::find_handles::<SimpleFileSystem>().expect("Failed to get FS handles!");
-
-    for handle in handles {
-        if *name == get_volume_name(handle) {
-            return Some(handle);
-        }
-    }
-    None
-}
-
-pub fn open_fs_handle(fs_handle: &Handle) -> Option<FileSystem> {
-    Some(FileSystem::new(
-        uefi::boot::open_protocol_exclusive::<SimpleFileSystem>(*fs_handle).ok()?,
-    ))
-}
-
-fn volume_name_from_root_dir(root_dir: &mut Directory) -> CString16 {
-    if let Ok(info_box) = root_dir.get_boxed_info::<FileSystemVolumeLabel>() {
-        let info = Box::leak(info_box);
-        return info.volume_label().into();
-    }
-    CString16::try_from("[Volume name error]").unwrap()
-}
+pub mod fs;
 
 pub struct EFI {
     pub volume_name: CString16,
@@ -138,27 +69,6 @@ pub fn get_device_path_for_file(
     )
 }
 
-pub fn start_efi(image_handle: &Handle, device_path: &DevicePath) {
-    match uefi::boot::load_image(
-        *image_handle,
-        LoadImageSource::FromDevicePath {
-            device_path: device_path,
-            boot_policy: BootPolicy::BootSelection,
-        },
-    ) {
-        Ok(loaded_image) => {
-            println!("Starting image...\n\n");
-            uefi::boot::stall(1_500_000);
-
-            let _ = uefi::boot::start_image(loaded_image);
-            println!("The EFI application exited");
-        }
-        Err(err) => {
-            println!("Failed to load EFI image into buffer because of: {}", err);
-        }
-    }
-}
-
 pub struct Drive {
     pub idx: u8,
     pub medium: Medium,
@@ -177,7 +87,7 @@ impl fmt::Display for Drive {
             f,
             "{} size: {}",
             self.linux_name(),
-            self.medium.human_readable_size()
+            human_readable_size(self.medium.size)
         )
     }
 }
@@ -186,28 +96,7 @@ pub struct Partition {
     drive_idx: u8,
     idx: u8,
     medium: Medium,
-    fs_type: FsType,
-}
-
-#[derive(Copy, Clone)]
-pub enum FsType {
-    Ext4,
-    Fat,
-    Unknown,
-}
-
-impl core::fmt::Display for FsType {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                Self::Ext4 => "EXT4",
-                Self::Fat => "FAT",
-                Self::Unknown => "Unknown",
-            }
-        )
-    }
+    fs: Option<Box<dyn Filesystem>>,
 }
 
 impl Partition {
@@ -218,8 +107,38 @@ impl Partition {
         .unwrap()
     }
 
-    pub fn format(&self) -> FsType {
-        self.fs_type
+    pub fn fstype(&self) -> Option<fs::FsType> {
+        Some(self.fs.as_ref()?.format())
+    }
+
+    pub fn fstype_as_str(&self) -> &str {
+        match self.fstype() {
+            None => "Unknown",
+            Some(fs::FsType::Ext4) => "EXT4",
+            Some(fs::FsType::Fat) => "FAT",
+        }
+    }
+
+    pub fn find_by_name(name: &CString16) -> Option<Partition> {
+        let drives = get_drives();
+
+        for drive in drives {
+            for partition in drive.partitions {
+                if &partition.linux_name() == name {
+                    return Some(partition);
+                }
+            }
+        }
+
+        None
+    }
+
+    pub fn fs(&mut self) -> Option<&mut Box<dyn Filesystem>> {
+        self.fs.as_mut()
+    }
+
+    pub fn medium(&self) -> &Medium {
+        &self.medium
     }
 }
 
@@ -229,8 +148,8 @@ impl fmt::Display for Partition {
             f,
             "{} format: {}, size: {}",
             self.linux_name(),
-            self.format(),
-            self.medium.human_readable_size()
+            self.fstype_as_str(),
+            human_readable_size(self.medium.size)
         )
     }
 }
@@ -242,26 +161,24 @@ pub struct Medium {
     pub size: u64,
 }
 
-impl Medium {
-    pub fn human_readable_size(&self) -> CString16 {
-        const K: u64 = 1024;
-        const M: u64 = 1024 * K;
-        const G: u64 = 1024 * M;
+pub fn human_readable_size(size: u64) -> CString16 {
+    const K: u64 = 1024;
+    const M: u64 = 1024 * K;
+    const G: u64 = 1024 * M;
 
-        CString16::try_from(
-            if self.size > 10 * G {
-                format!("{}GB", self.size / G)
-            } else if self.size > 10 * M {
-                format!("{}MB", self.size / M)
-            } else if self.size > 10 * K {
-                format!("{}KB", self.size / K)
-            } else {
-                format!("{}B", self.size)
-            }
-            .as_str(),
-        )
-        .unwrap()
-    }
+    CString16::try_from(
+        if size >= 10 * G {
+            format!("{:>4} GB", size / G)
+        } else if size >= 10 * M {
+            format!("{:>4} MB", size / M)
+        } else if size >= 10 * K {
+            format!("{:>4} KB", size / K)
+        } else {
+            format!("{:>4} B ", size)
+        }
+        .as_str(),
+    )
+    .unwrap()
 }
 
 pub fn get_drives() -> Vec<Drive> {
@@ -317,7 +234,7 @@ pub fn get_drives() -> Vec<Drive> {
             let part = Partition {
                 drive_idx: parent_drive.idx,
                 idx,
-                fs_type: detect_filesystem_format(medium),
+                fs: get_fs(medium),
                 medium,
             };
 
@@ -367,18 +284,6 @@ pub fn partition_handle_matches_drive_handle(
     }
 }
 
-pub fn print_device_path(handle: Handle) {
-    let scoped_prot = open_protocol_unsafe::<DevicePath>(handle).unwrap();
-    let device_path = scoped_prot.get().unwrap();
-
-    println!(
-        "{}",
-        device_path
-            .to_string(DisplayOnly(false), AllowShortcuts(false))
-            .unwrap()
-    )
-}
-
 pub fn open_protocol_unsafe<P>(handle: Handle) -> uefi::Result<ScopedProtocol<P>>
 where
     P: ProtocolPointer + ?Sized,
@@ -414,16 +319,6 @@ pub fn get_fs(medium: Medium) -> Option<Box<dyn Filesystem>> {
     }
 
     None
-}
-
-pub fn detect_filesystem_format(medium: Medium) -> FsType {
-    if supports_protocol::<SimpleFileSystem>(medium.handle) {
-        FsType::Ext4
-    } else if let Ok(_) = Ext4::load(Box::new(medium)) {
-        FsType::Fat
-    } else {
-        FsType::Unknown
-    }
 }
 
 impl Ext4Read for Medium {

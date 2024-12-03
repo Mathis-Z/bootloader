@@ -6,7 +6,9 @@ use core::arch::asm;
 
 use alloc::vec::Vec;
 use uefi::boot::MemoryType;
-use uefi::{fs::Path, prelude::*, println, CString16};
+use uefi::{println, CString16};
+
+use crate::simple_error::{simple_error, SimpleResult};
 
 use self::params::*;
 
@@ -16,39 +18,21 @@ pub struct Kernel {
 }
 
 impl Kernel {
-    pub fn load_and_start(cmdline: &CString16, fs_handle: &Handle, path: &CString16) {
-        if let Some(mut kernel) = Kernel::load_from(fs_handle, path) {
-            if !kernel.check_magic_number() {
-                println!("Kernel image does not start with MZ magic number!");
-            }
+    pub fn new(image: Vec<u8>) -> SimpleResult<Self> {
+        let kernel = Kernel {
+            kernel_params: KernelParams::new(&image),
+            blob: image,
+        };
 
-            kernel.start(cmdline)
-        } else {
-            println!("Kernel not loaded");
+        if !kernel.check_magic_number() {
+            return simple_error!("Kernel image does not start with magic bytes 'MZ'!");
         }
+
+        Ok(kernel)
     }
 
     pub fn check_magic_number(&self) -> bool {
-        return self.blob[0] == 0x4d || self.blob[1] == 0x5a;
-    }
-
-    pub fn load_from(fs_handle: &Handle, path: &CString16) -> Option<Kernel> {
-        println!("Loading kernel...");
-
-        let Some(mut fs) = crate::disk::open_fs_handle(fs_handle) else {
-            return None;
-        };
-
-        match fs.read(Path::new(path)) {
-            Ok(data) => Some(Kernel {
-                kernel_params: KernelParams::new(&data),
-                blob: data,
-            }),
-            Err(err) => {
-                println!("Error reading vmlinuz image: {}", err);
-                None
-            }
-        }
+        return self.blob[0] == 0x4d && self.blob[1] == 0x5a;
     }
 
     fn start_efi_handover(&mut self) -> ! {

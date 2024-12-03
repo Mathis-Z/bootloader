@@ -1,14 +1,14 @@
 #![no_main]
 #![no_std]
 
-use shell::*;
-use uefi::prelude::*;
-
 mod disk;
 mod kernel;
 mod mem;
 mod shell;
 mod simple_error;
+
+use shell::*;
+use uefi::prelude::*;
 
 #[entry]
 fn main() -> Status {
