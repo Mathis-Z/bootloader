@@ -99,7 +99,7 @@ impl Command {
         }
 
         if let Some(partition_name) = path.components.first() {
-            let Some(mut partition) = Partition::find_by_name(partition_name) else {
+            let Some(partition) = Partition::find_by_name(partition_name) else {
                 return simple_error!("No partition with the name {partition_name} was found.");
             };
 
@@ -120,7 +120,7 @@ impl Command {
             }
         } else {
             for drive in get_drives() {
-                for partition in drive.partitions {
+                for partition in &drive.partitions {
                     println!("{partition}")
                 }
             }
@@ -156,7 +156,7 @@ impl Command {
             return Ok(());
         };
 
-        let Some(mut partition) = Partition::find_by_name(partition_name) else {
+        let Some(partition) = Partition::find_by_name(partition_name) else {
             return simple_error!("No partition with the name {partition_name} was found.");
         };
 
@@ -183,11 +183,11 @@ impl Command {
         let mut path = shell.cwd.clone();
         path.push(&self.args[0]);
 
-        let Some(partition_name) = path.components.first() else {
+        let Some(partition_name) = path.components.first().cloned() else {
             return simple_error!("/ is not an EFI -.-");
         };
 
-        let Some(mut partition) = Partition::find_by_name(partition_name) else {
+        let Some(partition) = Partition::find_by_name(&partition_name) else {
             return simple_error!("No partition with the name {partition_name} was found.");
         };
 
@@ -248,7 +248,7 @@ impl Command {
             return simple_error!("/ is not a kernel -.-");
         };
 
-        let Some(mut partition) = Partition::find_by_name(partition_name) else {
+        let Some(partition) = Partition::find_by_name(partition_name) else {
             return simple_error!("No partition with the name {partition_name} was found.");
         };
 

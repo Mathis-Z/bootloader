@@ -119,11 +119,11 @@ impl Partition {
         }
     }
 
-    pub fn find_by_name(name: &CString16) -> Option<Partition> {
+    pub fn find_by_name(name: &CString16) -> Option<&mut Partition> {
         let drives = get_drives();
 
         for drive in drives {
-            for partition in drive.partitions {
+            for partition in &mut drive.partitions {
                 if &partition.linux_name() == name {
                     return Some(partition);
                 }
@@ -181,7 +181,15 @@ pub fn human_readable_size(size: u64) -> CString16 {
     .unwrap()
 }
 
-pub fn get_drives() -> Vec<Drive> {
+// this assumes no drives will be connected or disconnected while the bootloader runs
+// TODO: make this ugly code prettier
+static mut DRIVES: Option<Vec<Drive>> = None;
+
+pub fn get_drives() -> &'static mut Vec<Drive> {
+    if let Some(drives) = unsafe { DRIVES.as_mut() } {
+        return drives;
+    }
+
     let block_handles = boot::find_handles::<BlockIO>().unwrap();
 
     let mut drives: Vec<Drive> = Vec::new();
@@ -244,7 +252,10 @@ pub fn get_drives() -> Vec<Drive> {
         }
     }
 
-    drives
+    unsafe {
+        DRIVES = Some(drives);
+        return DRIVES.as_mut().unwrap();
+    }
 }
 
 pub fn find_matching_drive(
