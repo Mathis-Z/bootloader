@@ -7,7 +7,7 @@ use alloc::vec::Vec;
 use ext4_view::{Ext4, Ext4Error};
 use uefi::boot::ScopedProtocol;
 use uefi::proto::media::file::FileMode;
-use uefi::{println, CStr16, Char16};
+use uefi::Char16;
 use uefi::{
     proto::media::{
         file::{FileHandle, FileInfo},
@@ -171,41 +171,37 @@ impl FsPath {
         }
     }
 
-    pub fn to_string(&self, from: usize) -> CString16 {
-        if from >= self.components.len() {
+    pub fn to_string(&self, skip_partition_name: bool) -> CString16 {
+        if self.components.is_empty() || (skip_partition_name && self.components.len() <= 1) {
             return CString16::try_from("/").unwrap();
         }
 
         let separator: Char16 = Char16::try_from('/').unwrap();
-
         let mut out = CString16::new();
+        let start_from = if skip_partition_name { 1 } else { 0 };
 
-        let mut first = true;
-        for component in &self.components[from..] {
-            if from == 0 || !first {
-                out.push(separator);
-            }
+        for component in &self.components[start_from..] {
+            out.push(separator);
             out.push_str(component);
-            first = false;
         }
 
         out
     }
 
     pub fn path_on_partition(&self) -> CString16 {
-        self.to_string(1)
+        self.to_string(true)
     }
 }
 
 impl Display for FsPath {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{}", self.to_string(0))
+        write!(f, "{}", self.to_string(false))
     }
 }
 
 impl From<FsPath> for CString16 {
     fn from(value: FsPath) -> Self {
-        value.to_string(0)
+        value.to_string(false)
     }
 }
 
@@ -290,9 +286,10 @@ impl Filesystem for Ext4 {
     }
 
     fn read_file(&mut self, path: CString16) -> Result<Vec<u8>, FileError> {
-        println!("reading {path}");
+        let str = alloc::string::String::from_utf16_lossy(path.to_u16_slice());
+        let p = ext4_view::Path::new(&str);
 
-        match self.read(ext4_view::Path::new(path.as_bytes())) {
+        match self.read(p) {
             Ok(data) => Ok(data),
             Err(error) => Err(match error {
                 Ext4Error::NotFound => FileError::NotFound,
@@ -303,12 +300,12 @@ impl Filesystem for Ext4 {
     }
 
     fn read_directory(&mut self, path: CString16) -> Result<Directory, FileError> {
-        println!("reading {path}");
+        let str = alloc::string::String::from_utf16_lossy(path.to_u16_slice());
+        let p = ext4_view::Path::new(&str);
 
-        match self.read_dir(ext4_view::Path::new(path.as_bytes())) {
+        match self.read_dir(p) {
             Ok(dir) => {
                 let mut files: Vec<File> = Vec::new();
-                println!("read");
 
                 for dir_entry in dir.into_iter() {
                     let Ok(dir_entry) = dir_entry else {
@@ -321,7 +318,6 @@ impl Filesystem for Ext4 {
 
                     files.push(file);
                 }
-                println!("ok");
 
                 Ok(Directory { files })
             }
