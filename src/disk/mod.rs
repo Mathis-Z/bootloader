@@ -146,10 +146,10 @@ impl fmt::Display for Partition {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "{} format: {}, size: {}",
+            "{}  {}  format: {}",
             self.linux_name(),
+            human_readable_size(self.medium.size),
             self.fstype_as_str(),
-            human_readable_size(self.medium.size)
         )
     }
 }
@@ -222,7 +222,6 @@ pub fn get_drives() -> &'static mut Vec<Drive> {
     }
 
     // Now we "attach" the partitions to their drives.
-    idx = 0;
     for &handle in &block_handles {
         if supports_protocol::<PartitionInfo>(handle) {
             let scoped_prot = open_protocol_unsafe::<BlockIO>(handle).unwrap();
@@ -241,14 +240,12 @@ pub fn get_drives() -> &'static mut Vec<Drive> {
 
             let part = Partition {
                 drive_idx: parent_drive.idx,
-                idx,
+                idx: parent_drive.partitions.len() as u8 + 1,
                 fs: get_fs(medium),
                 medium,
             };
 
             parent_drive.partitions.push(part);
-
-            idx += 1;
         }
     }
 
