@@ -1,11 +1,10 @@
 extern crate alloc;
 
-use crate::disk::get_device_path_for_file;
 use crate::simple_error::simple_error;
 use alloc::{string::String, vec::Vec};
 use boot::{image_handle, LoadImageSource};
 use disk::fs::{FileError, FsPath};
-use disk::{get_drives, Partition};
+use disk::{Drive, Partition};
 use simple_error::SimpleResult;
 use uefi::{data_types::EqStrUntilNul, println, CString16};
 
@@ -119,7 +118,7 @@ impl Command {
                 }
             }
         } else {
-            for drive in get_drives() {
+            for drive in Drive::all() {
                 for partition in &drive.partitions {
                     println!("{partition}")
                 }
@@ -200,7 +199,7 @@ impl Command {
             Err(FileError::NotFound) => simple_error!("{path} not found."),
             Err(_) => simple_error!("An error occurred."),
             Ok(data) => {
-                let file_dpath = get_device_path_for_file(&partition.medium().handle, &path.into());
+                let file_dpath = partition.device_path_for_file(&path.into());
 
                 if file_dpath.is_none() {
                     println!("Could not get device path for the file. Starting the EFI might work anyway.");
