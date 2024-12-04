@@ -8,7 +8,7 @@ mod shell;
 mod simple_error;
 
 use shell::*;
-use uefi::prelude::*;
+use uefi::{prelude::*, println};
 
 #[entry]
 fn main() -> Status {
@@ -22,6 +22,8 @@ fn main() -> Status {
 }
 
 #[panic_handler]
-fn panic(_info: &core::panic::PanicInfo) -> ! {
+fn panic(info: &core::panic::PanicInfo) -> ! {
+    println!("================= PANIC =================");
+    println!("{info}");
     loop {}
 }
