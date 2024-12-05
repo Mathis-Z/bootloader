@@ -6,7 +6,7 @@ use uefi::proto::device_path::build::DevicePathBuilder;
 
 use crate::simple_error::simple_error;
 use ext4_view::{Ext4, Ext4Read};
-use fs::Filesystem;
+use fs::{Directory, Filesystem, FsPath};
 use uefi::boot::{self, image_handle, OpenProtocolParams, ScopedProtocol};
 use uefi::proto::media::disk::DiskIo;
 use uefi::proto::media::partition::PartitionInfo;
@@ -230,6 +230,61 @@ impl Medium {
 
         None
     }
+}
+
+// TODO: find windows .efi as well
+pub fn find_quickstart_options() -> Vec<FsPath> {
+    let mut quickstart_options: Vec<FsPath> = Vec::new();
+
+    for drive in Drive::all() {
+        for partition in &mut drive.partitions {
+            let partition_name = partition.linux_name();
+
+            let Some(fs) = partition.fs() else {
+                continue;
+            };
+
+            // For simplicity we assume that kernel image names will start with 'vmlinuz'
+            // Otherwise the user has to go find their kernel image themself >:/
+
+            fn is_kernel_image(file: &fs::File) -> bool {
+                let kernel_image_prefix = "vmlinuz";
+                let file_name = alloc::string::ToString::to_string(file.name());
+
+                file.is_regular_file()
+                    && file.size() > 10_000
+                    && file_name.len() >= kernel_image_prefix.len()
+                    && file_name[0..kernel_image_prefix.len()] == *kernel_image_prefix
+            }
+
+            for directory_to_search in alloc::vec!["/", "/boot"] {
+                let dir = fs
+                    .read_directory(CString16::try_from(directory_to_search).unwrap())
+                    .unwrap_or(Directory::empty());
+
+                for file in dir.files() {
+                    if is_kernel_image(file) {
+                        let file_path = match FsPath::parse(&alloc::format!(
+                            "/{}{}/{}",
+                            partition_name,
+                            directory_to_search,
+                            file.name()
+                        )) {
+                            Ok(p) => p,
+                            Err(e) => {
+                                println!("{e}");
+                                continue;
+                            }
+                        };
+
+                        quickstart_options.push(file_path);
+                    }
+                }
+            }
+        }
+    }
+
+    quickstart_options
 }
 
 pub fn human_readable_size(size: u64) -> CString16 {

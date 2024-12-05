@@ -66,7 +66,7 @@ pub struct File {
     size: u64,
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub enum FileType {
     File,
     Directory,
@@ -116,13 +116,17 @@ impl FsPath {
         (components, is_absolute)
     }
 
-    pub fn parse(str: &CString16) -> SimpleResult<FsPath> {
-        let (components, is_absolute) = Self::parse_components(str);
+    pub fn parse<S: alloc::string::ToString>(string_like: &S) -> SimpleResult<FsPath> {
+        let string = alloc::string::ToString::to_string(string_like);
+        let cstring = CString16::try_from(string.as_str())
+            .or_else(|_| simple_error!("'{string}' contained invalid characters"))?;
+
+        let (components, is_absolute) = Self::parse_components(&cstring);
 
         if is_absolute {
-            simple_error!("Path is not absolute!")
-        } else {
             Ok(FsPath { components })
+        } else {
+            simple_error!("Path is not absolute!")
         }
     }
 
@@ -205,6 +209,12 @@ impl From<FsPath> for CString16 {
     }
 }
 
+impl From<&FsPath> for CString16 {
+    fn from(value: &FsPath) -> Self {
+        value.to_string(false)
+    }
+}
+
 impl File {
     pub fn name(&self) -> &CString16 {
         &self.name
@@ -212,6 +222,14 @@ impl File {
 
     pub fn file_type(&self) -> &FileType {
         &self.ftype
+    }
+
+    pub fn size(&self) -> u64 {
+        self.size
+    }
+
+    pub fn is_regular_file(&self) -> bool {
+        self.ftype == FileType::File
     }
 }
 
@@ -265,6 +283,10 @@ impl From<&FileInfo> for File {
 }
 
 impl Directory {
+    pub fn empty() -> Self {
+        Directory { files: Vec::new() }
+    }
+
     pub fn files(&self) -> &Vec<File> {
         &self.files
     }

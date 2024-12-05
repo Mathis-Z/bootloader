@@ -28,6 +28,7 @@ pub struct Shell {
     cmd_history: Vec<CString16>,
     cwd: FsPath,
     pub exit: bool,
+    quickstart_options: Vec<FsPath>,
 }
 
 impl Shell {
@@ -37,11 +38,14 @@ impl Shell {
             cmd_history_idx: 0,
             cmd_history: Vec::new(),
             exit: false,
+            quickstart_options: crate::disk::find_quickstart_options(),
         }
     }
 
     pub fn enter(&mut self) {
         let _ = self.help();
+        println!("");
+        let _ = self.quickstart_options();
 
         let _ = uefi::system::with_stdout(|stdout| stdout.enable_cursor(true));
 
@@ -144,6 +148,8 @@ impl Shell {
                 "cd" => self.cd(args),
                 "runefi" => self.run_efi(args),
                 "runkernel" => self.run_kernel(args),
+                "quickstart" => self.quickstart(args),
+                "quickstart_options" => self.quickstart_options(),
                 _ => simple_error!("Unknown command '{program}'"),
             } {
                 println!("{error}");
@@ -215,7 +221,41 @@ impl Shell {
         println!("- printmmap");
         println!("- runefi [PATH]");
         println!("- runkernel [PATH] [KERNEL-CMDLINE]");
+        println!("- quickstart_options");
+        println!("- quickstart [IDX]");
 
+        Ok(())
+    }
+
+    fn quickstart(&mut self, args: Vec<CString16>) -> SimpleResult<()> {
+        if args.len() != 1 {
+            return simple_error!("quickstart takes one argument");
+        }
+
+        let quickstart_idx: usize = alloc::string::ToString::to_string(&args[0])
+            .parse()
+            .or_else(|_| simple_error!("Could not parse '{}' as integer", args[0]))?;
+
+        let Some(kernel_path) = self.quickstart_options.get(quickstart_idx) else {
+            return simple_error!("{quickstart_idx} is out of range");
+        };
+
+        let partition_name = kernel_path.components.first().unwrap();
+        let kernel_cmd =
+            CString16::try_from(alloc::format!("root=/dev/{partition_name}").as_str()).unwrap();
+
+        self.run_kernel(alloc::vec![kernel_path.into(), kernel_cmd])
+    }
+
+    fn quickstart_options(&mut self) -> SimpleResult<()> {
+        println!(" Your quickstart options are:");
+
+        for (idx, opt) in self.quickstart_options.iter().enumerate() {
+            println!(
+                "[{idx}] {opt}   with cmdline: 'root=/dev/{}'",
+                opt.components.first().unwrap()
+            );
+        }
         Ok(())
     }
 
