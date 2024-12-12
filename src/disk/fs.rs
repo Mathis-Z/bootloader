@@ -369,7 +369,7 @@ impl Filesystem for ScopedProtocol<SimpleFileSystem> {
 
         loop {
             let old = data.len();
-            data.resize(old * 2, 0);
+            data.resize(old * 2 + 1, 0);
             let new_buf = &mut data[old..];
 
             let Ok(bytes_read) = file.read(new_buf) else {
