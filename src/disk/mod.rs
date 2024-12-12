@@ -22,6 +22,27 @@ use crate::simple_error::{self, SimpleError};
 
 pub mod fs;
 
+pub fn read_file(path: &FsPath) -> simple_error::SimpleResult<Vec<u8>> {
+    let Some(partition_name) = path.components.first() else {
+        return simple_error!("/ is not a file.");
+    };
+
+    let Some(partition) = Partition::find_by_name(partition_name) else {
+        return simple_error!("No partition with the name {partition_name} was found.");
+    };
+
+    let Some(fs) = partition.fs() else {
+        return simple_error!("The partition's filesystem could not be read.");
+    };
+
+    match fs.read_file(path.path_on_partition()) {
+        Err(fs::FileError::NotAFile) => simple_error!("{path} is not a file."),
+        Err(fs::FileError::NotFound) => simple_error!("{path} not found."),
+        Err(_) => simple_error!("An error occurred."),
+        Ok(data) => Ok(data),
+    }
+}
+
 // this assumes no drives will be connected or disconnected while the bootloader runs
 // TODO: make this ugly code prettier
 static mut DRIVES: Option<Vec<Drive>> = None;

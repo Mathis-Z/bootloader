@@ -80,6 +80,16 @@ impl Kernel {
             .set_param(KernelParam::CmdLinePtr, cmdline_addr);
     }
 
+    fn set_ramdisk(&mut self, ramdisk: Option<Vec<u8>>) {
+        if let Some(ramdisk) = ramdisk {
+            self.kernel_params.set_param(KernelParam::RamdiskImage, ramdisk.as_ptr() as u64);
+            self.kernel_params.set_param(KernelParam::RamdiskSize, ramdisk.len() as u64);
+        } else {
+            self.kernel_params.set_param(KernelParam::RamdiskImage, 0);
+            self.kernel_params.set_param(KernelParam::RamdiskSize, 0);
+        }
+    }
+
     fn setup_stack_and_heap(&mut self) -> u64 {
         let stack_top_addr = crate::mem::allocate_low_pages(8) + 8 * 4096;
         let heap_end_addr = crate::mem::allocate_low_pages(8) + 8 * 4096;
@@ -130,17 +140,16 @@ impl Kernel {
         }
     }
 
-    pub fn start(&mut self, cmdline: &CString16) {
+    pub fn start(&mut self, cmdline: &CString16, ramdisk: Option<Vec<u8>>) {
         if self.kernel_params.get_param(KernelParam::RelocatableKernel) == 0 {
             println!("Kernel is not relocatable! This code only works for relocatable kernels :(");
             return;
         }
 
+        // setting parameters shared by both handover methods
         self.kernel_params
             .set_param(KernelParam::TypeOfLoader, 0xFF); // custom bootloader
-        self.kernel_params.set_param(KernelParam::RamdiskImage, 0); // no ramdisk
-        self.kernel_params.set_param(KernelParam::RamdiskSize, 0);
-
+        self.set_ramdisk(ramdisk);
         self.set_cmdline(cmdline);
 
         if self.kernel_params.get_param(KernelParam::XLoadflags) & 0b100 == 0 {

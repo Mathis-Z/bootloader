@@ -220,7 +220,7 @@ impl Shell {
         println!("- clear");
         println!("- printmmap");
         println!("- runefi [PATH]");
-        println!("- runkernel [PATH] [KERNEL-CMDLINE]");
+        println!("- runkernel [PATH] [KERNEL-CMDLINE] [opt. RAMDISK]");
         println!("- quickstart_options");
         println!("- quickstart [IDX]");
 
@@ -406,34 +406,30 @@ impl Shell {
     }
 
     pub fn run_kernel(&mut self, args: Vec<CString16>) -> SimpleResult<()> {
-        if args.len() != 2 {
-            return simple_error!("runkernel needs two arguments");
+        if args.len() < 2 || args.len() > 3 {
+            return simple_error!("runkernel needs two or three arguments");
         }
 
-        let mut path = self.cwd.clone();
-        path.push(&args[0]);
+        let mut ramdisk = None;
+        if args.len() == 3 {
+            let mut ramdisk_image_path = self.cwd.clone();
+            ramdisk_image_path.push(&args[2]);
+
+            ramdisk = Some(crate::disk::read_file(&ramdisk_image_path).or_else(|err| {
+                simple_error!("Could not read ramdisk image: {err}")
+            })?);
+        }
+
+        let mut kernel_image_path = self.cwd.clone();
+        kernel_image_path.push(&args[0]);
+
+        let kernel = crate::disk::read_file(&kernel_image_path).or_else(|err| {
+            simple_error!("Could not read kernel image: {err}")
+        })?;
+
         let kernel_cmdline = &args[1];
 
-        let Some(partition_name) = path.components.first() else {
-            return simple_error!("/ is not a kernel -.-");
-        };
-
-        let Some(partition) = Partition::find_by_name(partition_name) else {
-            return simple_error!("No partition with the name {partition_name} was found.");
-        };
-
-        let Some(fs) = partition.fs() else {
-            return simple_error!("The partition's filesystem could not be read.");
-        };
-
-        match fs.read_file(path.path_on_partition()) {
-            Err(FileError::NotAFile) => simple_error!("{path} is not a file"),
-            Err(FileError::NotFound) => simple_error!("{path} not found."),
-            Err(_) => simple_error!("An error occurred."),
-            Ok(data) => {
-                crate::kernel::Kernel::new(data)?.start(kernel_cmdline);
-                Ok(())
-            }
-        }
+        crate::kernel::Kernel::new(kernel)?.start(kernel_cmdline, ramdisk);
+        Ok(())
     }
 }
