@@ -5,6 +5,7 @@ use uefi::proto::device_path::build::media::FilePath;
 use uefi::proto::device_path::build::DevicePathBuilder;
 
 use crate::simple_error::simple_error;
+use crate::QuickstartOption;
 use ext4_view::{Ext4, Ext4Read};
 use fs::{Directory, Filesystem, FsPath};
 use uefi::boot::{self, image_handle, OpenProtocolParams, ScopedProtocol};
@@ -19,6 +20,8 @@ use uefi::{
 };
 
 use crate::simple_error::{self, SimpleError};
+use regex::Regex;
+use alloc::string::ToString;
 
 pub mod fs;
 
@@ -254,8 +257,8 @@ impl Medium {
 }
 
 // TODO: find windows .efi as well
-pub fn find_quickstart_options() -> Vec<FsPath> {
-    let mut quickstart_options: Vec<FsPath> = Vec::new();
+pub fn find_quickstart_options() -> Vec<QuickstartOption> {
+    let mut quickstart_options: Vec<QuickstartOption> = Vec::new();
 
     for drive in Drive::all() {
         for partition in &mut drive.partitions {
@@ -265,40 +268,66 @@ pub fn find_quickstart_options() -> Vec<FsPath> {
                 continue;
             };
 
-            // For simplicity we assume that kernel image names will start with 'vmlinuz'
-            // Otherwise the user has to go find their kernel image themself >:/
-
-            fn is_kernel_image(file: &fs::File) -> bool {
-                let kernel_image_prefix = "vmlinuz";
-                let file_name = alloc::string::ToString::to_string(file.name());
-
-                file.is_regular_file()
-                    && file.size() > 10_000
-                    && file_name.len() >= kernel_image_prefix.len()
-                    && file_name[0..kernel_image_prefix.len()] == *kernel_image_prefix
-            }
-
             for directory_to_search in alloc::vec!["/", "/boot"] {
-                let dir = fs
+                let dir: Directory = fs
                     .read_directory(CString16::try_from(directory_to_search).unwrap())
                     .unwrap_or(Directory::empty());
 
-                for file in dir.files() {
-                    if is_kernel_image(file) {
-                        let file_path = match FsPath::parse(&alloc::format!(
-                            "/{}{}/{}",
-                            partition_name,
-                            directory_to_search,
-                            file.name()
-                        )) {
-                            Ok(p) => p,
-                            Err(e) => {
-                                println!("{e}");
-                                continue;
-                            }
-                        };
+                let mut cwd = FsPath::new();
+                cwd.push(&partition_name);
+                cwd.push(&CString16::try_from(&directory_to_search[1..]).unwrap());
+                let files = dir.files();
 
-                        quickstart_options.push(file_path);
+                // For simplicity we assume that kernel image names will be like vmlinuz-<version> or bzImage-<version>
+                // Otherwise the user has to go find their kernel image themself >:/
+                let kernel_regex = Regex::new(r"^(vmlinuz|bzImage)-(.+)$").unwrap();
+                let ramdisk_regex = Regex::new(r"^(initrd\.img|initramfs)-(.+)(\.img)?$").unwrap();
+
+                let mut ramdisks = alloc::collections::btree_map::BTreeMap::new();
+                for file in files {
+                    if !(file.is_regular_file() && file.size() > 1000) {
+                        continue;
+                    }
+
+                    let file_name = file.name();
+                    let file_name_str = file_name.to_string();
+                    let ramdisk_match = ramdisk_regex.captures(&file_name_str);
+
+                    if let Some(caps) = ramdisk_match {
+                        if let Some(version) = caps.get(2) {
+                            ramdisks.insert(version.as_str().to_string(), file_name.to_string());
+                        }
+                    }
+                }
+
+                for file in files {
+                    if !(file.is_regular_file() && file.size() > 1000) {
+                        continue;
+                    }
+
+                    let file_name = file.name();
+                    let file_name_str = file_name.to_string();
+                    let kernel_match = kernel_regex.captures(&file_name_str);
+
+                    if let Some(caps) = kernel_match {
+                        if let Some(version) = caps.get(2) {
+                            let mut kernel_path = cwd.clone();
+                            kernel_path.push(file_name);
+
+                            let ramdisk_path = ramdisks.get(version.as_str()).map(|name| {
+                                let mut ramdisk_path = cwd.clone();
+                                ramdisk_path.push(&CString16::try_from(name.as_str()).unwrap());
+                                ramdisk_path
+                            });
+
+                            quickstart_options.push(
+                                QuickstartOption {
+                                    kernel_path,
+                                    ramdisk_path,
+                                    cmdline: CString16::try_from(alloc::format!("root=/dev/{}", partition_name).as_str()).unwrap(),
+                                }
+                            );
+                        }
                     }
                 }
             }

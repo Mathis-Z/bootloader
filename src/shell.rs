@@ -28,7 +28,13 @@ pub struct Shell {
     cmd_history: Vec<CString16>,
     cwd: FsPath,
     pub exit: bool,
-    quickstart_options: Vec<FsPath>,
+    quickstart_options: Vec<QuickstartOption>,
+}
+
+pub struct QuickstartOption {
+    pub kernel_path: FsPath,
+    pub ramdisk_path: Option<FsPath>,
+    pub cmdline: CString16,
 }
 
 impl Shell {
@@ -236,25 +242,35 @@ impl Shell {
             .parse()
             .or_else(|_| simple_error!("Could not parse '{}' as integer", args[0]))?;
 
-        let Some(kernel_path) = self.quickstart_options.get(quickstart_idx) else {
+        let Some(opt) = self.quickstart_options.get(quickstart_idx) else {
             return simple_error!("{quickstart_idx} is out of range");
         };
 
-        let partition_name = kernel_path.components.first().unwrap();
+        let partition_name = opt.kernel_path.components.first().unwrap();
         let kernel_cmd =
             CString16::try_from(alloc::format!("root=/dev/{partition_name}").as_str()).unwrap();
 
-        self.run_kernel(alloc::vec![kernel_path.into(), kernel_cmd])
+        let mut args = Vec::new();
+        args.push(opt.kernel_path.clone().into());
+        args.push(kernel_cmd);
+
+        if let Some(ramdisk_path) = &opt.ramdisk_path {
+            args.push(ramdisk_path.clone().into());
+        }
+
+        self.run_kernel(args)
+        
     }
 
     fn quickstart_options(&mut self) -> SimpleResult<()> {
         println!(" Your quickstart options are:");
 
         for (idx, opt) in self.quickstart_options.iter().enumerate() {
-            println!(
-                "[{idx}] {opt}   with cmdline: 'root=/dev/{}'",
-                opt.components.first().unwrap()
-            );
+            if let Some(ramdisk_path) = &opt.ramdisk_path {
+                println!("[{idx}] runkernel {} '{}' {}", opt.kernel_path, opt.cmdline, ramdisk_path);
+            } else {
+                println!("[{idx}] runkernel {} '{}'", opt.kernel_path, opt.cmdline);
+            }
         }
         Ok(())
     }
