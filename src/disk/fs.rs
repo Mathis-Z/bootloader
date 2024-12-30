@@ -24,12 +24,12 @@ use super::simple_error;
 
 // trait to abstract the ext4_view crate and uefi FAT driver into one interface
 pub trait Filesystem {
-    fn read_file(&mut self, path: CString16) -> Result<Vec<u8>, FileError>;
-    fn read_directory(&mut self, path: CString16) -> Result<Directory, FileError>;
+    fn read_file(&mut self, path: &CString16) -> Result<Vec<u8>, FileError>;
+    fn read_directory(&mut self, path: &CString16) -> Result<Directory, FileError>;
     fn format(&self) -> FsType;
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq)]
 pub enum FsType {
     Ext4,
     Fat,
@@ -116,8 +116,8 @@ impl FsPath {
         (components, is_absolute)
     }
 
-    pub fn parse<S: alloc::string::ToString>(string_like: &S) -> SimpleResult<FsPath> {
-        let string = alloc::string::ToString::to_string(string_like);
+    pub fn parse<T: alloc::string::ToString>(string_like: T) -> SimpleResult<FsPath> {
+        let string = string_like.to_string();
         let cstring = CString16::try_from(string.as_str())
             .or_else(|_| simple_error!("'{string}' contained invalid characters"))?;
 
@@ -160,9 +160,9 @@ impl FsPath {
         }
     }
 
-    pub fn push(&mut self, other: &CString16) {
+    pub fn push(&mut self, other: &CString16) -> &mut Self {
         if other.is_empty() {
-            return;
+            return self;
         }
 
         let (mut components, is_absolute) = Self::parse_components(other);
@@ -173,6 +173,8 @@ impl FsPath {
             self.components.append(&mut components);
             self.merge_dots();
         }
+
+        self
     }
 
     fn _to_string(&self, skip_partition_name: bool, separator: &CString16) -> CString16 {
@@ -310,7 +312,7 @@ impl Filesystem for Ext4 {
         FsType::Ext4
     }
 
-    fn read_file(&mut self, path: CString16) -> Result<Vec<u8>, FileError> {
+    fn read_file(&mut self, path: &CString16) -> Result<Vec<u8>, FileError> {
         let str = alloc::string::String::from_utf16_lossy(path.to_u16_slice());
         let p = ext4_view::Path::new(&str);
 
@@ -324,7 +326,7 @@ impl Filesystem for Ext4 {
         }
     }
 
-    fn read_directory(&mut self, path: CString16) -> Result<Directory, FileError> {
+    fn read_directory(&mut self, path: &CString16) -> Result<Directory, FileError> {
         let str = alloc::string::String::from_utf16_lossy(path.to_u16_slice());
         let p = ext4_view::Path::new(&str);
 
@@ -361,8 +363,8 @@ impl Filesystem for ScopedProtocol<SimpleFileSystem> {
         FsType::Fat
     }
 
-    fn read_file(&mut self, path: CString16) -> Result<Vec<u8>, FileError> {
-        let file_handle = uefi_get_file_handle(self, &path)?;
+    fn read_file(&mut self, path: &CString16) -> Result<Vec<u8>, FileError> {
+        let file_handle = uefi_get_file_handle(self, path)?;
         let Some(mut file) = file_handle.into_regular_file() else {
             return Err(FileError::NotAFile);
         };
@@ -389,8 +391,8 @@ impl Filesystem for ScopedProtocol<SimpleFileSystem> {
         Ok(data)
     }
 
-    fn read_directory(&mut self, path: CString16) -> Result<Directory, FileError> {
-        let file_handle = uefi_get_file_handle(self, &path)?;
+    fn read_directory(&mut self, path: &CString16) -> Result<Directory, FileError> {
+        let file_handle = uefi_get_file_handle(self, path)?;
         let Some(mut dir) = file_handle.into_directory() else {
             return Err(FileError::NotADirectory);
         };

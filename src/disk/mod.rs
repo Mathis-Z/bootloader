@@ -1,5 +1,7 @@
 extern crate alloc;
 
+use core::any::Any;
+
 use alloc::{boxed::Box, fmt, format, vec::Vec};
 use uefi::proto::device_path::build::media::FilePath;
 use uefi::proto::device_path::build::DevicePathBuilder;
@@ -38,7 +40,7 @@ pub fn read_file(path: &FsPath) -> simple_error::SimpleResult<Vec<u8>> {
         return simple_error!("The partition's filesystem could not be read.");
     };
 
-    match fs.read_file(path.path_on_partition()) {
+    match fs.read_file(&path.path_on_partition()) {
         Err(fs::FileError::NotAFile) => simple_error!("{path} is not a file."),
         Err(fs::FileError::NotFound) => simple_error!("{path} not found."),
         Err(_) => simple_error!("An error occurred."),
@@ -258,26 +260,38 @@ impl Medium {
     }
 }
 
-// TODO: find windows .efi as well
+// search all partitions for linux kernel images or the windows bootloader .efi
 pub fn find_quickstart_options() -> Vec<QuickstartOption> {
     let mut quickstart_options: Vec<QuickstartOption> = Vec::new();
 
     for drive in Drive::all() {
         for partition in &mut drive.partitions {
             let partition_name = partition.linux_name();
+            let Some(fstype) = partition.fstype() else {
+                continue;   // Cannot read 'Unknown' filesystems anyway
+            };
 
             let Some(fs) = partition.fs() else {
                 continue;
             };
 
+            if fstype == fs::FsType::Fat {
+                let windows_efi_path = CString16::try_from("/EFI/Microsoft/Boot/bootmgfw.efi").unwrap();
+
+                if let Ok(_) = fs.read_file(&windows_efi_path) {
+                    let full_path = FsPath::parse(format!("/{}{}", partition_name, windows_efi_path).as_str()).unwrap();
+
+                    quickstart_options.push(QuickstartOption::EFI { full_path })
+                }
+            }
+
             for directory_to_search in alloc::vec!["/", "/boot"] {
                 let dir: Directory = fs
-                    .read_directory(CString16::try_from(directory_to_search).unwrap())
+                    .read_directory(&CString16::try_from(directory_to_search).unwrap())
                     .unwrap_or(Directory::empty());
 
                 let mut cwd = FsPath::new();
-                cwd.push(&partition_name);
-                cwd.push(&CString16::try_from(&directory_to_search[1..]).unwrap());
+                cwd.push(&partition_name).push(&CString16::try_from(&directory_to_search[1..]).unwrap());
                 let files = dir.files();
 
                 // For simplicity we assume that kernel image names will be like vmlinuz-<version> or bzImage-<version>
@@ -285,52 +299,42 @@ pub fn find_quickstart_options() -> Vec<QuickstartOption> {
                 let kernel_regex = Regex::new(r"^(vmlinuz|bzImage)-(.+)$").unwrap();
                 let ramdisk_regex = Regex::new(r"^(initrd\.img|initramfs)-(.+)(\.img)?$").unwrap();
 
+                let mut kernels = alloc::collections::btree_map::BTreeMap::new();
                 let mut ramdisks = alloc::collections::btree_map::BTreeMap::new();
+
                 for file in files {
                     if !(file.is_regular_file() && file.size() > 1000) {
                         continue;
                     }
 
-                    let file_name = file.name();
-                    let file_name_str = file_name.to_string();
-                    let ramdisk_match = ramdisk_regex.captures(&file_name_str);
+                    let file_name_cstring = file.name();
+                    let mut file_path = cwd.clone();
+                    file_path.push(&file_name_cstring);
 
-                    if let Some(caps) = ramdisk_match {
+                    let file_name = file_name_cstring.to_string();
+                    
+                    let kernel_match = kernel_regex.captures(&file_name);
+                    let ramdisk_match = ramdisk_regex.captures(&file_name);
+
+                    if let Some(caps) = kernel_match {
                         if let Some(version) = caps.get(2) {
-                            ramdisks.insert(version.as_str().to_string(), file_name.to_string());
+                            kernels.insert(version.as_str().to_string(), file_path);
+                        }
+                    } else if let Some(caps) = ramdisk_match {
+                        if let Some(version) = caps.get(2) {
+                            ramdisks.insert(version.as_str().to_string(), file_path);
                         }
                     }
                 }
 
-                for file in files {
-                    if !(file.is_regular_file() && file.size() > 1000) {
-                        continue;
-                    }
-
-                    let file_name = file.name();
-                    let file_name_str = file_name.to_string();
-                    let kernel_match = kernel_regex.captures(&file_name_str);
-
-                    if let Some(caps) = kernel_match {
-                        if let Some(version) = caps.get(2) {
-                            let mut kernel_path = cwd.clone();
-                            kernel_path.push(file_name);
-
-                            let ramdisk_path = ramdisks.get(version.as_str()).map(|name| {
-                                let mut ramdisk_path = cwd.clone();
-                                ramdisk_path.push(&CString16::try_from(name.as_str()).unwrap());
-                                ramdisk_path
-                            });
-
-                            quickstart_options.push(
-                                QuickstartOption {
-                                    kernel_path,
-                                    ramdisk_path,
-                                    cmdline: CString16::try_from(alloc::format!("root=/dev/{}", partition_name).as_str()).unwrap(),
-                                }
-                            );
+                for (version, kernel_path) in kernels {
+                    quickstart_options.push(
+                        QuickstartOption::Kernel {
+                            kernel_path: kernel_path.clone(),
+                            ramdisk_path: ramdisks.get(&version).cloned(),
+                            cmdline: CString16::try_from(alloc::format!("root=/dev/{}", partition_name).as_str()).unwrap()
                         }
-                    }
+                    );
                 }
             }
         }

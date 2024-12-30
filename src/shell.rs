@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 
 use uefi::{
     print, println,
-    proto::{console::text::{Key, ScanCode}, device_path::text::{AllowShortcuts, DisplayOnly}, BootPolicy},
+    proto::{console::text::{Key, ScanCode}, BootPolicy},
     CString16, Char16,
 };
 
@@ -31,10 +31,9 @@ pub struct Shell {
     quickstart_options: Vec<QuickstartOption>,
 }
 
-pub struct QuickstartOption {
-    pub kernel_path: FsPath,
-    pub ramdisk_path: Option<FsPath>,
-    pub cmdline: CString16,
+pub enum QuickstartOption {
+    EFI { full_path: FsPath},
+    Kernel { kernel_path: FsPath, cmdline: CString16, ramdisk_path: Option<FsPath> },
 }
 
 impl Shell {
@@ -242,34 +241,45 @@ impl Shell {
             .parse()
             .or_else(|_| simple_error!("Could not parse '{}' as integer", args[0]))?;
 
-        let Some(opt) = self.quickstart_options.get(quickstart_idx) else {
-            return simple_error!("{quickstart_idx} is out of range");
-        };
+        match self.quickstart_options.get(quickstart_idx) {
+            Some(QuickstartOption::EFI { full_path }) => {
+                return self.run_efi(alloc::vec![full_path.clone().into()]);
+            },
+            Some(QuickstartOption::Kernel { kernel_path, cmdline, ramdisk_path }) => {
+                let mut args = Vec::new();
+                args.push(kernel_path.clone().into());
+                args.push(cmdline.clone());
 
-        let partition_name = opt.kernel_path.components.first().unwrap();
-        let kernel_cmd =
-            CString16::try_from(alloc::format!("root=/dev/{partition_name}").as_str()).unwrap();
+                if let Some(ramdisk_path) = ramdisk_path {
+                    args.push(ramdisk_path.clone().into());
+                }
 
-        let mut args = Vec::new();
-        args.push(opt.kernel_path.clone().into());
-        args.push(kernel_cmd);
-
-        if let Some(ramdisk_path) = &opt.ramdisk_path {
-            args.push(ramdisk_path.clone().into());
+                return self.run_kernel(args);
+            },
+            None => simple_error!("{quickstart_idx} is out of range"),
         }
-
-        self.run_kernel(args)
-        
     }
 
     fn quickstart_options(&mut self) -> SimpleResult<()> {
+        if self.quickstart_options.is_empty() {
+            println!("No quickstart options found.");
+            return Ok(());
+        }
+
         println!(" Your quickstart options are:");
 
         for (idx, opt) in self.quickstart_options.iter().enumerate() {
-            if let Some(ramdisk_path) = &opt.ramdisk_path {
-                println!("[{idx}] runkernel {} '{}' {}", opt.kernel_path, opt.cmdline, ramdisk_path);
-            } else {
-                println!("[{idx}] runkernel {} '{}'", opt.kernel_path, opt.cmdline);
+            match opt {
+                QuickstartOption::EFI { full_path } => {
+                    println!("[{idx}] runefi {full_path}");
+                },
+                QuickstartOption::Kernel { kernel_path, cmdline, ramdisk_path } => {
+                    if let Some(ramdisk_path) = &ramdisk_path {
+                        println!("[{idx}] runkernel {kernel_path} '{cmdline}' {ramdisk_path}");
+                    } else {
+                        println!("[{idx}] runkernel {kernel_path} '{cmdline}'");
+                    }
+                },
             }
         }
         Ok(())
@@ -293,7 +303,7 @@ impl Shell {
                 return simple_error!("The partition's filesystem could not be read.");
             };
 
-            match fs.read_directory(path.path_on_partition()) {
+            match fs.read_directory(&path.path_on_partition()) {
                 Err(FileError::NotADirectory) => simple_error!("{path} is not a directory"),
                 Err(FileError::NotFound) => simple_error!("{path} not found."),
                 Err(_) => simple_error!("An error occurred."),
@@ -350,7 +360,7 @@ impl Shell {
             return simple_error!("The partition's filesystem could not be read.");
         };
 
-        match fs.read_directory(path.path_on_partition()) {
+        match fs.read_directory(&path.path_on_partition()) {
             Err(FileError::NotADirectory) => simple_error!("{path} is not a directory"),
             Err(FileError::NotFound) => simple_error!("{path} not found."),
             Err(_) => simple_error!("An error occurred."),
@@ -382,7 +392,7 @@ impl Shell {
         };
 
         println!("Loading image into memory...");
-        match fs.read_file(path.path_on_partition()) {
+        match fs.read_file(&path.path_on_partition()) {
             Err(FileError::NotAFile) => simple_error!("{path} is not a file"),
             Err(FileError::NotFound) => simple_error!("{path} not found."),
             Err(_) => simple_error!("An error occurred."),
