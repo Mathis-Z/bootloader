@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 
 use uefi::{
     print, println,
-    proto::console::text::{Key, ScanCode},
+    proto::{console::text::{Key, ScanCode}, device_path::text::{AllowShortcuts, DisplayOnly}, BootPolicy},
     CString16, Char16,
 };
 
@@ -381,11 +381,12 @@ impl Shell {
             return simple_error!("The partition's filesystem could not be read.");
         };
 
+        println!("Loading image into memory...");
         match fs.read_file(path.path_on_partition()) {
             Err(FileError::NotAFile) => simple_error!("{path} is not a file"),
             Err(FileError::NotFound) => simple_error!("{path} not found."),
             Err(_) => simple_error!("An error occurred."),
-            Ok(data) => {
+            Ok(_) => {
                 let file_dpath = partition.device_path_for_file(&path.into());
 
                 if file_dpath.is_none() {
@@ -394,9 +395,9 @@ impl Shell {
 
                 match uefi::boot::load_image(
                     uefi::boot::image_handle(),
-                    uefi::boot::LoadImageSource::FromBuffer {
-                        buffer: data.as_slice(),
-                        file_path: file_dpath.as_deref(),
+                    uefi::boot::LoadImageSource::FromDevicePath {
+                        device_path: &file_dpath.unwrap(),
+                        boot_policy: BootPolicy::ExactMatch,
                     },
                 ) {
                     Ok(loaded_image) => {

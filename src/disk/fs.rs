@@ -175,17 +175,16 @@ impl FsPath {
         }
     }
 
-    pub fn to_string(&self, skip_partition_name: bool) -> CString16 {
+    fn _to_string(&self, skip_partition_name: bool, separator: &CString16) -> CString16 {
         if self.components.is_empty() || (skip_partition_name && self.components.len() <= 1) {
             return CString16::try_from("/").unwrap();
         }
 
-        let separator: Char16 = Char16::try_from('/').unwrap();
         let mut out = CString16::new();
         let start_from = if skip_partition_name { 1 } else { 0 };
 
         for component in &self.components[start_from..] {
-            out.push(separator);
+            out.push_str(separator);
             out.push_str(component);
         }
 
@@ -193,25 +192,29 @@ impl FsPath {
     }
 
     pub fn path_on_partition(&self) -> CString16 {
-        self.to_string(true)
+        self._to_string(true, &CString16::try_from("/").unwrap())
+    }
+
+    pub fn to_uefi_string(&self) -> CString16 {
+        self._to_string(true, &CString16::try_from("\\").unwrap())
     }
 }
 
 impl Display for FsPath {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{}", self.to_string(false))
+        write!(f, "{}", self._to_string(false, &CString16::try_from("/").unwrap()))
     }
 }
 
 impl From<FsPath> for CString16 {
     fn from(value: FsPath) -> Self {
-        value.to_string(false)
+        value._to_string(false, &CString16::try_from("/").unwrap())
     }
 }
 
 impl From<&FsPath> for CString16 {
     fn from(value: &FsPath) -> Self {
-        value.to_string(false)
+        value._to_string(false, &CString16::try_from("/").unwrap())
     }
 }
 

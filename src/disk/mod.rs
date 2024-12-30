@@ -194,7 +194,7 @@ impl Partition {
     }
 
     // TODO: is this the right place for this method?
-    pub fn device_path_for_file(&self, file_path: &CString16) -> Option<Box<DevicePath>> {
+    pub fn device_path_for_file(&self, file_path_str: &CString16) -> Option<Box<DevicePath>> {
         let mut full_dpath_buf = Vec::new();
         let mut full_dpath_builder = DevicePathBuilder::with_vec(&mut full_dpath_buf);
 
@@ -202,11 +202,13 @@ impl Partition {
             full_dpath_builder = full_dpath_builder.push(&node).ok()?;
         }
 
+        let path_on_partition_str  = FsPath::parse(file_path_str).ok()?.to_uefi_string();
+
         // appending file path node to the device path of the filesystem yields the full path
         Some(
             full_dpath_builder
                 .push(&FilePath {
-                    path_name: &file_path,
+                    path_name: &path_on_partition_str,
                 })
                 .ok()?
                 .finalize()
