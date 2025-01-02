@@ -1,7 +1,5 @@
 extern crate alloc;
 
-use core::any::Any;
-
 use alloc::{boxed::Box, fmt, format, vec::Vec};
 use uefi::proto::device_path::build::media::FilePath;
 use uefi::proto::device_path::build::DevicePathBuilder;
@@ -9,7 +7,7 @@ use uefi::proto::device_path::build::DevicePathBuilder;
 use crate::simple_error::simple_error;
 use crate::QuickstartOption;
 use ext4_view::{Ext4, Ext4Read};
-use fs::{Directory, Filesystem, FsPath};
+use fs::{Filesystem, FsPath};
 use uefi::boot::{self, image_handle, OpenProtocolParams, ScopedProtocol};
 use uefi::proto::media::disk::DiskIo;
 use uefi::proto::media::partition::PartitionInfo;
@@ -286,9 +284,9 @@ pub fn find_quickstart_options() -> Vec<QuickstartOption> {
             }
 
             for directory_to_search in alloc::vec!["/", "/boot"] {
-                let dir: Directory = fs
-                    .read_directory(&CString16::try_from(directory_to_search).unwrap())
-                    .unwrap_or(Directory::empty());
+                let Ok(dir) = fs.read_directory(&CString16::try_from(directory_to_search).unwrap()) else {
+                    continue;
+                };
 
                 let mut cwd = FsPath::new();
                 cwd.push(&partition_name).push(&CString16::try_from(&directory_to_search[1..]).unwrap());
@@ -303,7 +301,7 @@ pub fn find_quickstart_options() -> Vec<QuickstartOption> {
                 let mut ramdisks = alloc::collections::btree_map::BTreeMap::new();
 
                 for file in files {
-                    if !(file.is_regular_file() && file.size() > 1000) {
+                    if !file.is_regular_file() || file.size() < 1000 {
                         continue;
                     }
 

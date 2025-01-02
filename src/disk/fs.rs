@@ -288,10 +288,6 @@ impl From<&FileInfo> for File {
 }
 
 impl Directory {
-    pub fn empty() -> Self {
-        Directory { files: Vec::new() }
-    }
-
     pub fn files(&self) -> &Vec<File> {
         &self.files
     }
