@@ -6,7 +6,7 @@ use core::arch::asm;
 
 use alloc::vec::Vec;
 use uefi::boot::MemoryType;
-use uefi::{println, CString16};
+use uefi::println;
 
 use crate::simple_error::{simple_error, SimpleResult};
 
@@ -73,7 +73,7 @@ impl Kernel {
         addr
     }
 
-    fn set_cmdline(&mut self, cmdline: &CString16) {
+    fn set_cmdline(&mut self, cmdline: &str) {
         let cmdline_addr = allocate_cmdline(cmdline);
         println!("Cmdline allocated at {:x}", cmdline_addr);
         self.kernel_params
@@ -140,7 +140,7 @@ impl Kernel {
         }
     }
 
-    pub fn start(&mut self, cmdline: &CString16, ramdisk: Option<Vec<u8>>) {
+    pub fn start(&mut self, cmdline: &str, ramdisk: Option<Vec<u8>>) {
         if self.kernel_params.get_param(KernelParam::RelocatableKernel) == 0 {
             println!("Kernel is not relocatable! This code only works for relocatable kernels :(");
             return;

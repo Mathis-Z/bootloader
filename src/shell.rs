@@ -1,11 +1,10 @@
 extern crate alloc;
 
-use alloc::vec::Vec;
+use alloc::{vec::Vec, string::String, string::ToString};
 
 use uefi::{
     print, println,
-    proto::{console::text::{Key, ScanCode}, BootPolicy},
-    CString16, Char16,
+    proto::{console::text::{Key, ScanCode}, device_path::text::{AllowShortcuts, DisplayOnly}, BootPolicy},
 };
 
 use crate::{
@@ -25,7 +24,7 @@ macro_rules! Char16 {
 
 pub struct Shell {
     cmd_history_idx: usize,
-    cmd_history: Vec<CString16>,
+    cmd_history: Vec<String>,
     cwd: FsPath,
     pub exit: bool,
     quickstart_options: Vec<QuickstartOption>,
@@ -33,7 +32,7 @@ pub struct Shell {
 
 pub enum QuickstartOption {
     EFI { full_path: FsPath},
-    Kernel { kernel_path: FsPath, cmdline: CString16, ramdisk_path: Option<FsPath> },
+    Kernel { kernel_path: FsPath, cmdline: String, ramdisk_path: Option<FsPath> },
 }
 
 impl Shell {
@@ -57,12 +56,12 @@ impl Shell {
         while !self.exit {
             self.print_shell();
             let line = self.read_line();
-            self.execute_command_string(line);
+            self.execute_command_string(&line);
         }
     }
 
-    pub fn read_line(&mut self) -> CString16 {
-        let mut line = Vec::<Char16>::new();
+    pub fn read_line(&mut self) -> String {
+        let mut line = Vec::<char>::new();
 
         self.cmd_history_idx = self.cmd_history.len();
 
@@ -78,8 +77,8 @@ impl Shell {
                                 self.clear_shell_line(line.len());
                                 line = Vec::new();
 
-                                for char in self.cmd_history[self.cmd_history_idx].iter() {
-                                    line.push(*char);
+                                for char in self.cmd_history[self.cmd_history_idx].chars() {
+                                    line.push(char);
                                 }
 
                                 for char in &line {
@@ -94,8 +93,8 @@ impl Shell {
                                 self.clear_shell_line(line.len());
                                 line = Vec::new();
 
-                                for char in self.cmd_history[self.cmd_history_idx].iter() {
-                                    line.push(*char);
+                                for char in self.cmd_history[self.cmd_history_idx].chars() {
+                                    line.push(char);
                                 }
 
                                 for char in &line {
@@ -105,9 +104,14 @@ impl Shell {
                         }
 
                         Key::Printable(key) => {
+                            let key = match key.try_into() {
+                                Ok(key) => key,
+                                Err(_) => continue, // ignore characters not representable as char
+                            };
+
                             if key == '\r' {
                                 print!("\r\n");
-                                let mut s = CString16::new();
+                                let mut s = String::new();
                                 for char in line {
                                     s.push(char)
                                 }
@@ -139,11 +143,11 @@ impl Shell {
         }
     }
 
-    pub fn execute_command_string(&mut self, command: CString16) {
+    pub fn execute_command_string(&mut self, command: &str) {
         if !command.is_empty() {
-            self.cmd_history.push(command.clone());
+            self.cmd_history.push(command.to_string());
         }
-        if let Some((program, args)) = self.parse_command(&command) {
+        if let Some((program, args)) = self.parse_command(command) {
             if let Err(error) = match alloc::string::ToString::to_string(&program).as_str() {
                 "help" => self.help(),
                 "exit" => self.exit(),
@@ -162,44 +166,44 @@ impl Shell {
         }
     }
 
-    pub fn parse_command(&self, command: &CString16) -> Option<(CString16, Vec<CString16>)> {
-        let mut cmd_parts = Vec::<CString16>::new();
-        let mut new_cmd_part = CString16::new();
+    pub fn parse_command(&self, command: &str) -> Option<(String, Vec<String>)> {
+        let mut cmd_parts = Vec::<String>::new();
+        let mut new_cmd_part = String::new();
         let mut escaped = false;
         let mut single_quoted = false;
         let mut double_quoted = false;
 
-        for character in command.iter() {
-            if *character == Char16!('\\') {
+        for character in command.chars() {
+            if character == '\\' {
                 if escaped {
-                    new_cmd_part.push(*character);
+                    new_cmd_part.push(character);
                 }
                 escaped = !escaped;
-            } else if *character == Char16!(' ') {
+            } else if character == ' ' {
                 if escaped {
                     return None;
                 } else {
                     if single_quoted || double_quoted {
-                        new_cmd_part.push(*character);
+                        new_cmd_part.push(character);
                     } else if !new_cmd_part.is_empty() {
                         cmd_parts.push(new_cmd_part);
-                        new_cmd_part = CString16::new();
+                        new_cmd_part = String::new();
                     }
                 }
-            } else if *character == Char16!('\'') {
+            } else if character == '\'' {
                 if escaped || double_quoted {
-                    new_cmd_part.push(*character);
+                    new_cmd_part.push(character);
                 } else {
                     single_quoted = !single_quoted;
                 }
-            } else if *character == Char16!('\"') {
+            } else if character == '\"' {
                 if escaped || single_quoted {
-                    new_cmd_part.push(*character);
+                    new_cmd_part.push(character);
                 } else {
                     double_quoted = !double_quoted;
                 }
             } else {
-                new_cmd_part.push(*character)
+                new_cmd_part.push(character)
             }
         }
 
@@ -232,7 +236,7 @@ impl Shell {
         Ok(())
     }
 
-    fn quickstart(&mut self, args: Vec<CString16>) -> SimpleResult<()> {
+    fn quickstart(&mut self, args: Vec<String>) -> SimpleResult<()> {
         if args.len() != 1 {
             return simple_error!("quickstart takes one argument");
         }
@@ -243,15 +247,15 @@ impl Shell {
 
         match self.quickstart_options.get(quickstart_idx) {
             Some(QuickstartOption::EFI { full_path }) => {
-                return self.run_efi(alloc::vec![full_path.clone().into()]);
+                return self.run_efi(alloc::vec![full_path.into()]);
             },
             Some(QuickstartOption::Kernel { kernel_path, cmdline, ramdisk_path }) => {
                 let mut args = Vec::new();
-                args.push(kernel_path.clone().into());
+                args.push(kernel_path.into());
                 args.push(cmdline.clone());
 
                 if let Some(ramdisk_path) = ramdisk_path {
-                    args.push(ramdisk_path.clone().into());
+                    args.push(ramdisk_path.into());
                 }
 
                 return self.run_kernel(args);
@@ -285,7 +289,7 @@ impl Shell {
         Ok(())
     }
 
-    fn ls(&mut self, args: Vec<CString16>) -> SimpleResult<()> {
+    fn ls(&mut self, args: Vec<String>) -> SimpleResult<()> {
         let mut path = self.cwd.clone();
 
         if args.len() > 1 {
@@ -339,7 +343,7 @@ impl Shell {
         Ok(())
     }
 
-    fn cd(&mut self, args: Vec<CString16>) -> SimpleResult<()> {
+    fn cd(&mut self, args: Vec<String>) -> SimpleResult<()> {
         if args.len() != 1 {
             return simple_error!("cd needs one argument");
         }
@@ -371,7 +375,7 @@ impl Shell {
         }
     }
 
-    pub fn run_efi(&mut self, args: Vec<CString16>) -> SimpleResult<()> {
+    pub fn run_efi(&mut self, args: Vec<String>) -> SimpleResult<()> {
         if args.len() != 1 {
             return simple_error!("run_efi needs one argument");
         }
@@ -397,7 +401,7 @@ impl Shell {
             Err(FileError::NotFound) => simple_error!("{path} not found."),
             Err(_) => simple_error!("An error occurred."),
             Ok(_) => {
-                let file_dpath = partition.device_path_for_file(&path.into());
+                let file_dpath = partition.device_path_for_file::<String>(path.into());
 
                 if file_dpath.is_none() {
                     println!("Could not get device path for the file. Starting the EFI might work anyway.");
@@ -432,7 +436,7 @@ impl Shell {
         }
     }
 
-    pub fn run_kernel(&mut self, args: Vec<CString16>) -> SimpleResult<()> {
+    pub fn run_kernel(&mut self, args: Vec<String>) -> SimpleResult<()> {
         if args.len() < 2 || args.len() > 3 {
             return simple_error!("runkernel needs two or three arguments");
         }

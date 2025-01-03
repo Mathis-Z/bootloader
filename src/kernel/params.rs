@@ -6,7 +6,6 @@ use alloc::vec::Vec;
 use uefi::{
     boot::MemoryType,
     mem::memory_map::{MemoryMap, MemoryMapOwned},
-    CString16,
 };
 use uefi_raw::PhysicalAddress;
 
@@ -244,13 +243,13 @@ fn to_bytes<T: Into<u64>>(num: T) -> [u8; 8] {
     num_u64.to_le_bytes()
 }
 
-pub fn allocate_cmdline(cmdline: &CString16) -> PhysicalAddress {
+pub fn allocate_cmdline(cmdline: &str) -> PhysicalAddress {
     let addr = allocate_low_pages(1);
 
     unsafe {
         let ptr = addr as *mut u8;
-        for (i, char16) in cmdline.iter().enumerate() {
-            *ptr.offset(i.try_into().unwrap()) = char::from(*char16) as u8;
+        for (i, byte) in cmdline.as_bytes().iter().enumerate() {
+            *ptr.offset(i as isize) = *byte;
         }
     }
     addr

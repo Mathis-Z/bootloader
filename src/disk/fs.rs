@@ -2,12 +2,11 @@ extern crate alloc;
 
 use core::fmt::Display;
 
-use alloc::vec::Vec;
+use alloc::{vec::Vec, string::{String, ToString}};
 
 use ext4_view::{Ext4, Ext4Error};
-use uefi::boot::ScopedProtocol;
+use uefi::{boot::ScopedProtocol, data_types::FromStrError};
 use uefi::proto::media::file::FileMode;
-use uefi::Char16;
 use uefi::{
     proto::media::{
         file::{FileHandle, FileInfo},
@@ -24,8 +23,8 @@ use super::simple_error;
 
 // trait to abstract the ext4_view crate and uefi FAT driver into one interface
 pub trait Filesystem {
-    fn read_file(&mut self, path: &CString16) -> Result<Vec<u8>, FileError>;
-    fn read_directory(&mut self, path: &CString16) -> Result<Directory, FileError>;
+    fn read_file(&mut self, path: &str) -> Result<Vec<u8>, FileError>;
+    fn read_directory(&mut self, path: &str) -> Result<Directory, FileError>;
     fn format(&self) -> FsType;
 }
 
@@ -48,12 +47,21 @@ impl core::fmt::Display for FsType {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Clone)]
 pub enum FileError {
     NotFound,
     NotAFile,
     NotADirectory,
-    Other,
+    Other(String),
+}
+
+impl From<uefi::Error> for FileError {
+    fn from(error: uefi::Error) -> Self {
+        match error.status() {
+            uefi::Status::NOT_FOUND => FileError::NotFound,
+            _ => FileError::Other(alloc::format!("{error}")),
+        }
+    }
 }
 
 pub struct Directory {
@@ -61,7 +69,7 @@ pub struct Directory {
 }
 
 pub struct File {
-    name: CString16,
+    name: String,
     ftype: FileType,
     size: u64,
 }
@@ -76,7 +84,7 @@ pub enum FileType {
 // an absolute path beginning with the partition name
 #[derive(Debug, Clone)]
 pub struct FsPath {
-    pub components: Vec<CString16>,
+    pub components: Vec<String>,
 }
 
 impl FsPath {
@@ -86,23 +94,19 @@ impl FsPath {
         }
     }
 
-    fn parse_components(str: &CString16) -> (Vec<CString16>, bool) {
-        let separator: Char16 = Char16::try_from('/').unwrap();
+    fn parse_components(str: &str) -> (Vec<String>, bool) {
+        const SEPARATOR: char = '/';
 
         let mut components = Vec::new();
-        let mut component = CString16::new();
+        let mut component = String::new();
 
-        if str.is_empty() {
-            return (Vec::new(), false);
-        }
+        let is_absolute = str.starts_with(SEPARATOR);
 
-        let is_absolute = str.as_slice()[0] == separator;
-
-        for &char in str.iter() {
-            if char == separator {
+        for char in str.chars() {
+            if char == SEPARATOR {
                 if !component.is_empty() {
                     components.push(component);
-                    component = CString16::new();
+                    component = String::new();
                 }
             } else {
                 component.push(char);
@@ -116,12 +120,8 @@ impl FsPath {
         (components, is_absolute)
     }
 
-    pub fn parse<T: alloc::string::ToString>(string_like: T) -> SimpleResult<FsPath> {
-        let string = string_like.to_string();
-        let cstring = CString16::try_from(string.as_str())
-            .or_else(|_| simple_error!("'{string}' contained invalid characters"))?;
-
-        let (components, is_absolute) = Self::parse_components(&cstring);
+    pub fn parse<S: AsRef<str>>(string_like: S) -> SimpleResult<FsPath> {
+        let (components, is_absolute) = Self::parse_components(string_like.as_ref());
 
         if is_absolute {
             Ok(FsPath { components })
@@ -131,23 +131,23 @@ impl FsPath {
     }
 
     fn merge_dots(&mut self) {
-        let dot = &CString16::try_from(".").unwrap();
-        let double_dot = &CString16::try_from("..").unwrap();
+        const DOT: &str = ".";
+        const DOUBLE_DOT: &str = "..";
 
-        let mut new_components: Vec<CString16> = Vec::new();
+        let mut new_components: Vec<String> = Vec::new();
 
         for component in &self.components {
-            if component == dot {
+            if component == DOT {
                 continue; // remove all single dots
-            } else if component == double_dot {
+            } else if component == DOUBLE_DOT {
                 if let Some(prev_component) = new_components.last() {
-                    if prev_component == double_dot {
-                        new_components.push(double_dot.clone()); // cannot merge ".." with "..", just append
+                    if prev_component == DOUBLE_DOT {
+                        new_components.push(DOUBLE_DOT.to_string()); // cannot merge ".." with "..", just append
                     } else {
                         new_components.pop(); // merge ".." with previous component by popping it
                     }
                 } else {
-                    new_components.push(double_dot.clone());
+                    new_components.push(DOUBLE_DOT.to_string());
                 }
             } else {
                 new_components.push(component.clone());
@@ -155,17 +155,17 @@ impl FsPath {
         }
 
         self.components = new_components;
-        if self.components.first() == Some(double_dot) {
+        if self.components.first() == Some(&DOUBLE_DOT.to_string()) {
             self.components = Vec::new(); // cannot go higher than root
         }
     }
 
-    pub fn push(&mut self, other: &CString16) -> &mut Self {
-        if other.is_empty() {
+    pub fn push<S: AsRef<str>>(&mut self, other: S) -> &mut Self {
+        if other.as_ref().is_empty() {
             return self;
         }
 
-        let (mut components, is_absolute) = Self::parse_components(other);
+        let (mut components, is_absolute) = Self::parse_components(other.as_ref());
 
         if is_absolute {
             self.components = components;
@@ -177,13 +177,13 @@ impl FsPath {
         self
     }
 
-    fn _to_string(&self, skip_partition_name: bool, separator: &CString16) -> CString16 {
-        if self.components.is_empty() || (skip_partition_name && self.components.len() <= 1) {
-            return CString16::try_from("/").unwrap();
+    fn _to_string(&self, with_partition_name: bool, separator: &str) -> String {
+        if self.components.is_empty() || (!with_partition_name && self.components.len() == 1) {
+            return "/".to_string();
         }
 
-        let mut out = CString16::new();
-        let start_from = if skip_partition_name { 1 } else { 0 };
+        let mut out = String::new();
+        let start_from = if with_partition_name { 0 } else { 1 };
 
         for component in &self.components[start_from..] {
             out.push_str(separator);
@@ -193,35 +193,35 @@ impl FsPath {
         out
     }
 
-    pub fn path_on_partition(&self) -> CString16 {
-        self._to_string(true, &CString16::try_from("/").unwrap())
+    pub fn path_on_partition(&self) -> String {
+        self._to_string(false, "/")
     }
 
-    pub fn to_uefi_string(&self) -> CString16 {
-        self._to_string(true, &CString16::try_from("\\").unwrap())
+    pub fn to_uefi_string(&self, with_partition_name: bool) -> Result<CString16, FromStrError> {
+        CString16::try_from(&self._to_string(with_partition_name, "\\") as &str)
     }
 }
 
 impl Display for FsPath {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{}", self._to_string(false, &CString16::try_from("/").unwrap()))
+        write!(f, "{}", self._to_string(true, "/"))
     }
 }
 
-impl From<FsPath> for CString16 {
-    fn from(value: FsPath) -> Self {
-        value._to_string(false, &CString16::try_from("/").unwrap())
+impl From<FsPath> for String {
+    fn from(path: FsPath) -> Self {
+        path._to_string(true, "/")
     }
 }
 
-impl From<&FsPath> for CString16 {
-    fn from(value: &FsPath) -> Self {
-        value._to_string(false, &CString16::try_from("/").unwrap())
+impl From<&FsPath> for String {
+    fn from(path: &FsPath) -> Self {
+        path._to_string(true, "/")
     }
 }
 
 impl File {
-    pub fn name(&self) -> &CString16 {
+    pub fn name(&self) -> &str {
         &self.name
     }
 
@@ -259,9 +259,7 @@ impl TryFrom<ext4_view::DirEntry> for File {
     type Error = anyhow::Error;
 
     fn try_from(dir_entry: ext4_view::DirEntry) -> Result<Self, Self::Error> {
-        let Ok(name) = CString16::try_from(dir_entry.file_name().as_str()?) else {
-            anyhow::bail!("Filename to CString16 conversion failed");
-        };
+        let name = dir_entry.file_name().as_str()?.to_string();
         let ftype = dir_entry.file_type()?.into();
         let size = dir_entry.metadata()?.len();
 
@@ -308,23 +306,21 @@ impl Filesystem for Ext4 {
         FsType::Ext4
     }
 
-    fn read_file(&mut self, path: &CString16) -> Result<Vec<u8>, FileError> {
-        let str = alloc::string::String::from_utf16_lossy(path.to_u16_slice());
-        let p = ext4_view::Path::new(&str);
+    fn read_file(&mut self, path: &str) -> Result<Vec<u8>, FileError> {
+        let p = ext4_view::Path::new(path);
 
         match self.read(p) {
             Ok(data) => Ok(data),
             Err(error) => Err(match error {
                 Ext4Error::NotFound => FileError::NotFound,
                 Ext4Error::IsADirectory | Ext4Error::IsASpecialFile => FileError::NotAFile,
-                _ => FileError::Other,
+                other_error => FileError::Other(alloc::format!("{other_error}")),
             }),
         }
     }
 
-    fn read_directory(&mut self, path: &CString16) -> Result<Directory, FileError> {
-        let str = alloc::string::String::from_utf16_lossy(path.to_u16_slice());
-        let p = ext4_view::Path::new(&str);
+    fn read_directory(&mut self, path: &str) -> Result<Directory, FileError> {
+        let p = ext4_view::Path::new(path);
 
         match self.read_dir(p) {
             Ok(dir) => {
@@ -347,7 +343,7 @@ impl Filesystem for Ext4 {
             Err(error) => Err(match error {
                 Ext4Error::NotFound => FileError::NotFound,
                 Ext4Error::IsADirectory | Ext4Error::IsASpecialFile => FileError::NotAFile,
-                _ => FileError::Other,
+                other_error => FileError::Other(alloc::format!("{other_error}")),
             }),
         }
     }
@@ -359,7 +355,7 @@ impl Filesystem for ScopedProtocol<SimpleFileSystem> {
         FsType::Fat
     }
 
-    fn read_file(&mut self, path: &CString16) -> Result<Vec<u8>, FileError> {
+    fn read_file(&mut self, path: &str) -> Result<Vec<u8>, FileError> {
         let file_handle = uefi_get_file_handle(self, path)?;
         let Some(mut file) = file_handle.into_regular_file() else {
             return Err(FileError::NotAFile);
@@ -373,9 +369,8 @@ impl Filesystem for ScopedProtocol<SimpleFileSystem> {
             data.resize(old * 2 + 1, 0);
             let new_buf = &mut data[old..];
 
-            let Ok(bytes_read) = file.read(new_buf) else {
-                return Err(FileError::Other);
-            };
+            let bytes_read = file.read(new_buf)?;
+            
             total_bytes_read += bytes_read;
 
             if bytes_read < new_buf.len() {
@@ -387,7 +382,7 @@ impl Filesystem for ScopedProtocol<SimpleFileSystem> {
         Ok(data)
     }
 
-    fn read_directory(&mut self, path: &CString16) -> Result<Directory, FileError> {
+    fn read_directory(&mut self, path: &str) -> Result<Directory, FileError> {
         let file_handle = uefi_get_file_handle(self, path)?;
         let Some(mut dir) = file_handle.into_directory() else {
             return Err(FileError::NotADirectory);
@@ -396,9 +391,7 @@ impl Filesystem for ScopedProtocol<SimpleFileSystem> {
         let mut files = Vec::new();
 
         loop {
-            let Ok(file_info) = dir.read_entry_boxed() else {
-                return Err(FileError::Other);
-            };
+            let file_info = dir.read_entry_boxed()?;
 
             if let Some(file_info) = file_info {
                 files.push(file_info.as_ref().into());
@@ -411,27 +404,26 @@ impl Filesystem for ScopedProtocol<SimpleFileSystem> {
     }
 }
 
-fn uefi_get_file_handle(
+fn uefi_get_file_handle<S: AsRef<str>>(
     fs: &mut SimpleFileSystem,
-    path: &CString16,
+    path: S,
 ) -> Result<FileHandle, FileError> {
-    let Ok(mut root_directory) = fs.open_volume() else {
-        return core::prelude::v1::Err(FileError::Other);
+    let mut root_directory = match fs.open_volume() {
+        Ok(root_directory) => root_directory,
+        Err(efi_error) => return Err(FileError::Other(alloc::format!("{efi_error}"))),
+    };
+
+    let Ok(cstring_path) = CString16::try_from(path.as_ref()) else {
+        return Err(FileError::Other(alloc::format!("Path conversion to CString16 failed")));
     };
 
     let mut uefi_path = uefi::fs::PathBuf::new();
-    uefi_path.push(path.as_ref());
+    uefi_path.push(cstring_path.as_ref());
 
-    match uefi::proto::media::file::File::open(
+    Ok(uefi::proto::media::file::File::open(
         &mut root_directory,
         uefi_path.to_cstr16(),
         FileMode::Read,
         FileAttribute::empty(),
-    ) {
-        Ok(file_handle) => Ok(file_handle),
-        Err(error) => Err(match error.status() {
-            uefi::Status::NOT_FOUND => FileError::NotFound,
-            _ => FileError::Other,
-        }),
-    }
+    )?)
 }

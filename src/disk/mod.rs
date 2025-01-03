@@ -1,6 +1,6 @@
 extern crate alloc;
 
-use alloc::{boxed::Box, fmt, format, vec::Vec};
+use alloc::{boxed::Box, fmt, format, vec::Vec, string::String};
 use uefi::proto::device_path::build::media::FilePath;
 use uefi::proto::device_path::build::DevicePathBuilder;
 
@@ -57,8 +57,8 @@ pub struct Drive {
 }
 
 impl Drive {
-    pub fn linux_name(&self) -> CString16 {
-        CString16::try_from(format!("/dev/sd{}", ('a' as u8 + self.idx) as char).as_str()).unwrap()
+    pub fn linux_name(&self) -> String {
+        format!("/dev/sd{}", ('a' as u8 + self.idx) as char)
     }
 
     // TODO: is this the right place for this method?
@@ -156,11 +156,8 @@ pub struct Partition {
 }
 
 impl Partition {
-    pub fn linux_name(&self) -> CString16 {
-        CString16::try_from(
-            format!("sd{}{}", ('a' as u8 + self.drive_idx) as char, self.idx).as_str(),
-        )
-        .unwrap()
+    pub fn linux_name(&self) -> String {
+        format!("sd{}{}", ('a' as u8 + self.drive_idx) as char, self.idx)
     }
 
     pub fn fstype(&self) -> Option<fs::FsType> {
@@ -175,10 +172,8 @@ impl Partition {
         }
     }
 
-    pub fn find_by_name(name: &CString16) -> Option<&mut Partition> {
-        let drives = Drive::all();
-
-        for drive in drives {
+    pub fn find_by_name(name: &str) -> Option<&mut Partition> {
+        for drive in Drive::all() {
             for partition in &mut drive.partitions {
                 if &partition.linux_name() == name {
                     return Some(partition);
@@ -194,7 +189,9 @@ impl Partition {
     }
 
     // TODO: is this the right place for this method?
-    pub fn device_path_for_file(&self, file_path_str: &CString16) -> Option<Box<DevicePath>> {
+    pub fn device_path_for_file<S: AsRef<str>>(&self, file_path_str: S) -> Option<Box<DevicePath>> {
+        let file_path_str= file_path_str.as_ref();
+
         let mut full_dpath_buf = Vec::new();
         let mut full_dpath_builder = DevicePathBuilder::with_vec(&mut full_dpath_buf);
 
@@ -202,7 +199,7 @@ impl Partition {
             full_dpath_builder = full_dpath_builder.push(&node).ok()?;
         }
 
-        let path_on_partition_str  = FsPath::parse(file_path_str).ok()?.to_uefi_string();
+        let path_on_partition_str: CString16  = FsPath::parse(file_path_str).ok()?.to_uefi_string(false).ok()?;
 
         // appending file path node to the device path of the filesystem yields the full path
         Some(
@@ -274,22 +271,21 @@ pub fn find_quickstart_options() -> Vec<QuickstartOption> {
             };
 
             if fstype == fs::FsType::Fat {
-                let windows_efi_path = CString16::try_from("/EFI/Microsoft/Boot/bootmgfw.efi").unwrap();
+                const WINDOWS_EFI_PATH: &str = "/EFI/Microsoft/Boot/bootmgfw.efi";
 
-                if let Ok(_) = fs.read_file(&windows_efi_path) {
-                    let full_path = FsPath::parse(format!("/{}{}", partition_name, windows_efi_path).as_str()).unwrap();
+                if let Ok(_) = fs.read_file(WINDOWS_EFI_PATH) {
+                    let full_path = FsPath::parse(format!("/{partition_name}{WINDOWS_EFI_PATH}")).unwrap();
 
                     quickstart_options.push(QuickstartOption::EFI { full_path })
                 }
             }
 
             for directory_to_search in alloc::vec!["/", "/boot"] {
-                let Ok(dir) = fs.read_directory(&CString16::try_from(directory_to_search).unwrap()) else {
+                let Ok(dir) = fs.read_directory(directory_to_search) else {
                     continue;
                 };
 
-                let mut cwd = FsPath::new();
-                cwd.push(&partition_name).push(&CString16::try_from(&directory_to_search[1..]).unwrap());
+                let cwd = FsPath::parse(format!("/{partition_name}{directory_to_search}")).unwrap();
                 let files = dir.files();
 
                 // For simplicity we assume that kernel image names will be like vmlinuz-<version> or bzImage-<version>
@@ -330,7 +326,7 @@ pub fn find_quickstart_options() -> Vec<QuickstartOption> {
                         QuickstartOption::Kernel {
                             kernel_path: kernel_path.clone(),
                             ramdisk_path: ramdisks.get(&version).cloned(),
-                            cmdline: CString16::try_from(alloc::format!("root=/dev/{}", partition_name).as_str()).unwrap()
+                            cmdline: alloc::format!("root=/dev/{}", partition_name)
                         }
                     );
                 }
@@ -341,24 +337,20 @@ pub fn find_quickstart_options() -> Vec<QuickstartOption> {
     quickstart_options
 }
 
-pub fn human_readable_size(size: u64) -> CString16 {
+pub fn human_readable_size(size: u64) -> String {
     const K: u64 = 1024;
     const M: u64 = 1024 * K;
     const G: u64 = 1024 * M;
 
-    CString16::try_from(
-        if size >= 10 * G {
-            format!("{:>4} GB", size / G)
-        } else if size >= 10 * M {
-            format!("{:>4} MB", size / M)
-        } else if size >= 10 * K {
-            format!("{:>4} KB", size / K)
-        } else {
-            format!("{:>4} B ", size)
-        }
-        .as_str(),
-    )
-    .unwrap()
+    if size >= 10 * G {
+        format!("{:>4} GB", size / G)
+    } else if size >= 10 * M {
+        format!("{:>4} MB", size / M)
+    } else if size >= 10 * K {
+        format!("{:>4} KB", size / K)
+    } else {
+        format!("{:>4} B ", size)
+    }
 }
 
 fn find_matching_drive(drives: &mut Vec<Drive>, partition_handle: Handle) -> Option<&mut Drive> {
