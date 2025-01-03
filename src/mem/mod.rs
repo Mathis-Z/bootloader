@@ -3,7 +3,6 @@ extern crate alloc;
 use uefi::boot::AllocateType;
 use uefi::mem::memory_map::{MemoryMap, MemoryMapMut, MemoryType};
 use uefi::println;
-use uefi_raw::PhysicalAddress;
 
 pub(crate) mod gdt;
 pub(crate) mod paging;
@@ -26,7 +25,7 @@ pub fn print_memory_map() {
     }
 }
 
-pub fn allocate_pages(count: usize) -> u64 {
+pub fn allocate_pages(count: usize) -> usize {
     match uefi::boot::allocate_pages(
         AllocateType::MaxAddress(1 << 32), // stay under 4G to be safe (>4G could be fine with 64 bit but who knows)
         MemoryType::LOADER_DATA,
@@ -36,7 +35,7 @@ pub fn allocate_pages(count: usize) -> u64 {
             unsafe {
                 core::ptr::write_bytes(dst.as_mut(), 0, 4096 * count); // zero out pages
             }
-            dst.as_ptr() as u64
+            dst.as_ptr() as usize
         }
         Err(err) => {
             println!("Error: failed to allocate pages due to error: {}", err);
@@ -45,7 +44,7 @@ pub fn allocate_pages(count: usize) -> u64 {
     }
 }
 
-pub fn allocate_low_pages(count: usize) -> u64 {
+pub fn allocate_low_pages(count: usize) -> usize {
     match uefi::boot::allocate_pages(
         AllocateType::MaxAddress(0x100000),
         MemoryType::LOADER_DATA,
@@ -55,7 +54,7 @@ pub fn allocate_low_pages(count: usize) -> u64 {
             unsafe {
                 core::ptr::write_bytes(dst.as_mut(), 0, 4096 * count); // zero out pages
             }
-            dst.as_ptr() as u64
+            dst.as_ptr() as usize
         }
         Err(err) => {
             println!("Error: failed to allocate pages due to error: {}", err);
@@ -64,7 +63,7 @@ pub fn allocate_low_pages(count: usize) -> u64 {
     }
 }
 
-pub fn copy_buf_to_aligned_address(buf: &[u8]) -> PhysicalAddress {
+pub fn copy_buf_to_aligned_address(buf: &[u8]) -> usize {
     let page_count = (buf.len() - 1) / 4096 + 1;
 
     let dst = allocate_pages(page_count);

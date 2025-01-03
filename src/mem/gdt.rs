@@ -44,11 +44,11 @@ impl GdtEntry {
     }
 }
 
-pub fn allocate_page_for_gdt() -> u64 {
+pub fn allocate_page_for_gdt() -> usize {
     allocate_low_pages(1)
 }
 
-pub fn create_and_set_simple_gdt(page_addr: u64) {
+pub fn create_and_set_simple_gdt(page_addr: usize) {
     const GDT_ENTRY_BOOT_CS: usize = 2;
     const GDT_ENTRY_BOOT_DS: usize = 3;
 
@@ -94,7 +94,7 @@ pub fn create_and_set_simple_gdt(page_addr: u64) {
             in(reg) &gdtr,
         );
 
-        set_cs((GDT_ENTRY_BOOT_CS * 8) as u64);
+        set_cs((GDT_ENTRY_BOOT_CS * 8) as usize);
 
         asm!(
             r#"
@@ -111,7 +111,7 @@ pub fn create_and_set_simple_gdt(page_addr: u64) {
 }
 
 // CS cannot be set directly but only indirectly with a far return...
-unsafe fn set_cs(cs: u64) {
+unsafe fn set_cs(cs: usize) {
     unsafe {
         asm!(
             "push {sel}",

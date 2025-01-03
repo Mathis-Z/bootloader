@@ -4,7 +4,7 @@ use alloc::{vec::Vec, string::String, string::ToString};
 
 use uefi::{
     print, println,
-    proto::{console::text::{Key, ScanCode}, device_path::text::{AllowShortcuts, DisplayOnly}, BootPolicy},
+    proto::{console::text::{Key, ScanCode}, BootPolicy},
 };
 
 use crate::{

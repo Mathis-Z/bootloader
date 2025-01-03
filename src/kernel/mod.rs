@@ -51,16 +51,16 @@ impl Kernel {
 
         Kernel::jump_to_efi_entry(
             entry_point_efi_64bit,
-            uefi::boot::image_handle().as_ptr() as u64,
-            uefi::table::system_table_raw().unwrap().as_ptr() as u64,
+            uefi::boot::image_handle().as_ptr() as usize,
+            uefi::table::system_table_raw().unwrap().as_ptr() as usize,
             zero_page_addr,
         );
     }
 
-    fn extract_protected_mode_kernel_to_aligned_address(&mut self) -> u64 {
+    fn extract_protected_mode_kernel_to_aligned_address(&mut self) -> usize {
         // copying protected mode kernel to aligned address (actually the alignment should be 2M but this still works)
         let setup_code_size = self.kernel_params.get_param(KernelParam::SetupSects) * 512;
-        let protected_mode_kernel_start: usize = (setup_code_size + 512).try_into().unwrap();
+        let protected_mode_kernel_start = (setup_code_size + 512).try_into().unwrap();
 
         let addr =
             crate::mem::copy_buf_to_aligned_address(&self.blob[protected_mode_kernel_start..]);
@@ -82,15 +82,15 @@ impl Kernel {
 
     fn set_ramdisk(&mut self, ramdisk: Option<Vec<u8>>) {
         if let Some(ramdisk) = ramdisk {
-            self.kernel_params.set_param(KernelParam::RamdiskImage, ramdisk.as_ptr() as u64);
-            self.kernel_params.set_param(KernelParam::RamdiskSize, ramdisk.len() as u64);
+            self.kernel_params.set_param(KernelParam::RamdiskImage, ramdisk.as_ptr() as usize);
+            self.kernel_params.set_param(KernelParam::RamdiskSize, ramdisk.len() as usize);
         } else {
             self.kernel_params.set_param(KernelParam::RamdiskImage, 0);
             self.kernel_params.set_param(KernelParam::RamdiskSize, 0);
         }
     }
 
-    fn setup_stack_and_heap(&mut self) -> u64 {
+    fn setup_stack_and_heap(&mut self) -> usize {
         let stack_top_addr = crate::mem::allocate_low_pages(8) + 8 * 4096;
         let heap_end_addr = crate::mem::allocate_low_pages(8) + 8 * 4096;
 
@@ -125,8 +125,8 @@ impl Kernel {
 
         let gdt_page = crate::mem::gdt::allocate_page_for_gdt();
         println!("Building page tables...");
-        let pml4_ptr = unsafe { crate::mem::paging::prepare_identity_mapped_pml4() };
-        println!("Page tables built at: {:x}", pml4_ptr as u64);
+        let pml4_ptr = unsafe { crate::mem::paging::prepare_identity_mapped_pml4() } as usize;
+        println!("Page tables built at: {:x}", pml4_ptr);
 
         println!("Exiting boot services. Goodbye");
 
@@ -136,7 +136,7 @@ impl Kernel {
             KernelParams::set_memory_map(zero_page_addr, &old_mmap);
             crate::mem::gdt::create_and_set_simple_gdt(gdt_page);
 
-            Kernel::run(pml4_ptr as u64, stack_top_addr, entry_point, zero_page_addr);
+            Kernel::run(pml4_ptr, stack_top_addr, entry_point, zero_page_addr);
         }
     }
 
@@ -159,23 +159,23 @@ impl Kernel {
         }
     }
 
-    fn jump_to_efi_entry(entry_point: u64, handle: u64, system_table: u64, boot_params: u64) -> ! {
+    fn jump_to_efi_entry(entry_point: usize, handle: usize, system_table: usize, boot_params: usize) -> ! {
         unsafe {
             asm!(
                 r#"
                 jmp {}
                 "#,
                 in(reg) entry_point,
-                in("rdi") handle as *const u64 as usize,
-                in("rsi") system_table as *const u64 as usize,
-                in("rdx") boot_params as *const u64 as usize,
+                in("rdi") handle,
+                in("rsi") system_table,
+                in("rdx") boot_params,
             );
         }
         unreachable!();
     }
 
     // https://github.com/rust-osdev/bootloader/blob/main/common/src/lib.rs
-    unsafe fn run(page_table_addr: u64, stack_top: u64, entry_point: u64, boot_info: u64) -> ! {
+    unsafe fn run(page_table_addr: usize, stack_top: usize, entry_point: usize, boot_info: usize) -> ! {
         unsafe {
             asm!(
                 r#"
@@ -188,7 +188,7 @@ impl Kernel {
                 in(reg) page_table_addr,
                 in(reg) stack_top,
                 in(reg) entry_point,
-                in("rsi") boot_info as *const u64 as usize,
+                in("rsi") boot_info,
             );
         }
         unreachable!();

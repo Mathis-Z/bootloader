@@ -7,7 +7,6 @@ use uefi::{
     boot::MemoryType,
     mem::memory_map::{MemoryMap, MemoryMapOwned},
 };
-use uefi_raw::PhysicalAddress;
 
 use crate::mem::allocate_low_pages;
 
@@ -148,23 +147,26 @@ impl KernelParams {
         }
     }
 
-    pub fn get_param(&self, param: KernelParam) -> u64 {
+    pub fn get_param(&self, param: KernelParam) -> usize {
         let (offset, size) = param.offset_and_size();
-        let bytes = &self.buf[offset..offset + size];
 
-        from_bytes(bytes)
+        // pad with zeros
+        let mut bytes = [0u8; 8];
+        bytes[..size].copy_from_slice(&self.buf[offset..offset + size]);
+
+        usize::from_le_bytes(bytes)
     }
 
-    pub fn set_param(&mut self, param: KernelParam, value: u64) {
+    pub fn set_param(&mut self, param: KernelParam, value: usize) {
         let (offset, size) = param.offset_and_size();
-
         let old_slice = &mut self.buf[offset..offset + size];
-        let value_bytes = &to_bytes(value)[0..size];
+
+        let value_bytes = &value.to_le_bytes()[0..size];
 
         old_slice.copy_from_slice(value_bytes);
     }
 
-    pub fn copy_into_zero_page(&self) -> u64 {
+    pub fn copy_into_zero_page(&self) -> usize {
         let zero_page = allocate_low_pages(1);
         unsafe {
             core::ptr::copy(
@@ -178,7 +180,8 @@ impl KernelParams {
         zero_page
     }
 
-    pub fn set_video_params(zero_page: u64) {
+    pub fn set_video_params(zero_page: usize) {
+        // TODO: this is not working correctly
         let screen_info = unsafe { &mut *(zero_page as *mut ScreenInfo) };
 
         screen_info.orig_x = 0;
@@ -189,7 +192,7 @@ impl KernelParams {
         screen_info.orig_video_points = 16;
     }
 
-    pub fn set_memory_map(zero_page: u64, mmap: &MemoryMapOwned) {
+    pub fn set_memory_map(zero_page: usize, mmap: &MemoryMapOwned) {
         const MAX_E820_ENTRIES: usize = 128;
 
         let e820_table = unsafe {
@@ -227,23 +230,7 @@ impl KernelParams {
     }
 }
 
-fn from_bytes<T: From<u64>>(bytes: &[u8]) -> T {
-    // Pad the bytes slice with zeros to make it 8 bytes long
-    let mut array = [0u8; 8];
-    let len = bytes.len();
-    array[..len].copy_from_slice(&bytes);
-
-    let num = u64::from_le_bytes(array);
-
-    T::from(num)
-}
-
-fn to_bytes<T: Into<u64>>(num: T) -> [u8; 8] {
-    let num_u64: u64 = num.into();
-    num_u64.to_le_bytes()
-}
-
-pub fn allocate_cmdline(cmdline: &str) -> PhysicalAddress {
+pub fn allocate_cmdline(cmdline: &str) -> usize {
     let addr = allocate_low_pages(1);
 
     unsafe {
