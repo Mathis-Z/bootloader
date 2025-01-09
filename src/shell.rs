@@ -10,7 +10,7 @@ use uefi::{
 use crate::{
     disk::{
         fs::{FileError, FsPath},
-        StorageDevice, Partition,
+        Partition,
     },
     simple_error::{simple_error, SimpleResult},
 };

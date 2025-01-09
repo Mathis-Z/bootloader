@@ -1,28 +1,34 @@
 ## Features
-- EFI chain loading (andere EFI Apps starten)
-- FAT-Dateisysteme traversieren
-- Linux bzImage mit dem (deprecated) EFI handover protocol starten, wenn unterstützt, ansonsten mit 64 bit boot protocol 
+- Starting (recent) Linux bzImages with both the deprecated EFI handover protocol and the normal [64 bit boot protocol](https://github.com/torvalds/linux/blob/v4.16/Documentation/x86/boot.txt)
+- EFI chain loading (starting other .efi applications)
+- Reading from FAT, ext2 and ext4 file systems
 
-## Starten
+## Missing Features
 
-Wenn man das Makefile so angepasst hat, dass die drives, die QEMU gegeben werden, existieren, dann wird das Projekt kompiliert und gestartet mit `make run`. Es kann sein, dass dann nicht die kompilierte EFI-App gestartet wird, sondern GRUB oder was sonst so auf der virtuellen Festplatte unter /EFI/BOOT/BOOTX64.EFI installiert ist. Wenn das passiert, muss man die .EFI austauschen.
+- Booting OpenBSD / FreeBSD
+- Reading CDROMs (missing a crate for parsing [ISO9660](https://en.wikipedia.org/wiki/ISO_9660) unfortunately)
+- Booting older kernels that aren't relocatable in memory
+- Support for more file systems
+- Advanced features like network booting, secure boot, etc.
 
-## Debuggen
+## Starting using QEMU
 
-Um mit GDB zu debuggen kann man das Projekt mit `make debug` starten und sich dann in gdb mit `target remote localhost:1234` verbinden (siehe https://qemu-project.gitlab.io/qemu/system/gdb.html).
-Normale breakpoints funktionieren aus irgendeinem Grund nicht, aber hardware breakpoints (hbreak) schon.
-(Ein schönes GDB-Plugin ist übrigens pwndbg)
+1. Create a virtual drive containing your system(s) using virtualbox
+2. Edit the Makefile so your drive gets mounted (make sure the partition with bootloader gets mounted first)
+3. Start with `make run` and hope for the best
 
-Um Output vom Kernel zu bekommen, wenn der Screen noch nicht funktioniert, kann man der Kernel-Commandline die Parameter "keep_bootcon earlyprintk=ttyS0,115200" hinzufügen und in QEMU dann auf serial0 statt VGA umstellen (so sieht man auf dem experimental-branch auch die kernel-panic).
+## Debugging with gdb
 
+- Start with `make debug`
+- Connect to `target remote localhost:1234` using gdb ([like this](https://qemu-project.gitlab.io/qemu/system/gdb.html))
+- Normal breakpoints don't work; use hardware assisted breakpoints (hbreak) instead
+- Use the pwndbg plugin if you want gdb to look cool
+- To get output from early kernel booting, set "keep_bootcon earlyprintk=ttyS0,115200" in the kernel cmdline and switch to serial0 in QEMU
 
 ## Links
 
 - Rust UEFI github: https://github.com/rust-osdev/uefi-rs
-- Rust-UEFI tutorial: https://rust-osdev.github.io/uefi-rs/HEAD/introduction.html
-
+- Rust UEFI tutorial: https://rust-osdev.github.io/uefi-rs/HEAD/introduction.html
 - Linux Kernel Boot Protocol: https://github.com/torvalds/linux/blob/v4.16/Documentation/x86/boot.txt
 - Kernel booting process: https://0xax.gitbooks.io/linux-insides/content/Booting/linux-bootstrap-1.html
 - EFI handover protocol: https://www.kernel.org/doc/html/v5.6/x86/boot.html#efi-handover-protocol
-
-- Foliensatz zu Linux boot protocol: https://www.lse.epita.fr/lse-summer-week-2015/slides/lse-summer-week-2015-05-Linux_Boot_Protocol.pdf
