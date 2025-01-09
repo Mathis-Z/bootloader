@@ -10,7 +10,7 @@ use uefi::{
 use crate::{
     disk::{
         fs::{FileError, FsPath},
-        Drive, Partition,
+        StorageDevice, Partition,
     },
     simple_error::{simple_error, SimpleResult},
 };
@@ -42,7 +42,7 @@ impl Shell {
             cmd_history_idx: 0,
             cmd_history: Vec::new(),
             exit: false,
-            quickstart_options: crate::disk::find_quickstart_options(),
+            quickstart_options: crate::disk::find_quickstart_options().unwrap_or_else(|_| Vec::new()),
         }
     }
 
@@ -299,9 +299,7 @@ impl Shell {
         }
 
         if let Some(partition_name) = path.components.first() {
-            let Some(partition) = Partition::find_by_name(partition_name) else {
-                return simple_error!("No partition with the name {partition_name} was found.");
-            };
+            let partition = Partition::find_by_name(partition_name)?;
 
             let Some(fs) = partition.fs() else {
                 return simple_error!("The partition's filesystem could not be read.");
@@ -319,10 +317,8 @@ impl Shell {
                 }
             }
         } else {
-            for drive in Drive::all() {
-                for partition in &drive.partitions {
-                    println!("{partition}")
-                }
+            for partition in Partition::all()? {
+                println!("{partition}");
             }
             Ok(())
         }
@@ -356,9 +352,7 @@ impl Shell {
             return Ok(());
         };
 
-        let Some(partition) = Partition::find_by_name(partition_name) else {
-            return simple_error!("No partition with the name {partition_name} was found.");
-        };
+        let partition = Partition::find_by_name(partition_name)?;
 
         let Some(fs) = partition.fs() else {
             return simple_error!("The partition's filesystem could not be read.");
@@ -387,9 +381,7 @@ impl Shell {
             return simple_error!("/ is not an EFI -.-");
         };
 
-        let Some(partition) = Partition::find_by_name(&partition_name) else {
-            return simple_error!("No partition with the name {partition_name} was found.");
-        };
+        let partition = Partition::find_by_name(&partition_name)?;
 
         let Some(fs) = partition.fs() else {
             return simple_error!("The partition's filesystem could not be read.");
