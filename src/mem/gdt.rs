@@ -2,6 +2,26 @@ use core::{arch::asm, mem::size_of, slice};
 
 use crate::mem::*;
 
+const GDT_ENTRY_BOOT_CS: usize = 2;
+const GDT_ENTRY_BOOT_DS: usize = 3;
+
+const ACCESS_BYTE_A: u8 = 0b1;
+const ACCESS_BYTE_RW: u8 = 0b10;
+const _ACCESS_BYTE_DC: u8 = 0b100;
+const ACCESS_BYTE_E: u8 = 0b1000;
+const ACCESS_BYTE_S: u8 = 0b10000;
+const ACCESS_BYTE_P: u8 = 0b10000000;
+
+const FLAGS_G: u8 = 0b1000;
+const FLAGS_DB: u8 = 0b100;
+const FLAGS_L: u8 = 0b10;
+
+#[repr(C, packed)]
+pub struct Gdtr {
+    limit: u16,
+    base: u64,
+}
+
 #[repr(C, packed)]
 #[derive(Debug, Clone, Copy)]
 struct GdtEntry {
@@ -11,12 +31,6 @@ struct GdtEntry {
     access_flags: u8,
     limit_higher_and_flags: u8,
     base_higher: u8,
-}
-
-#[repr(C, packed)]
-struct Gdtr {
-    limit: u16,
-    base: u64,
 }
 
 impl GdtEntry {
@@ -44,86 +58,73 @@ impl GdtEntry {
     }
 }
 
-pub fn allocate_page_for_gdt() -> usize {
+pub fn allocate_page_for_gdt() -> SimpleResult<usize> {
     allocate_low_pages(1)
 }
 
-pub fn create_and_set_simple_gdt(page_addr: usize) {
-    const GDT_ENTRY_BOOT_CS: usize = 2;
-    const GDT_ENTRY_BOOT_DS: usize = 3;
+pub fn create_simple_gdtr() -> Gdtr {
+    let gdt_addr = allocate_low_pages(1).unwrap();
 
-    const ACCESS_BYTE_A: u8 = 0b1;
-    const ACCESS_BYTE_RW: u8 = 0b10;
-    const _ACCESS_BYTE_DC: u8 = 0b100;
-    const ACCESS_BYTE_E: u8 = 0b1000;
-    const ACCESS_BYTE_S: u8 = 0b10000;
-    const ACCESS_BYTE_P: u8 = 0b10000000;
+    let gdt_ptr = gdt_addr as *mut GdtEntry;
+    let gdt = unsafe { slice::from_raw_parts_mut(gdt_ptr, 0x40) };
 
-    const FLAGS_G: u8 = 0b1000;
-    const FLAGS_DB: u8 = 0b100;
-    const FLAGS_L: u8 = 0b10;
+    gdt[GDT_ENTRY_BOOT_CS].set_base(0);
+    gdt[GDT_ENTRY_BOOT_CS].set_limit(u32::MAX);
+    gdt[GDT_ENTRY_BOOT_CS].set_access_flags(
+        ACCESS_BYTE_P | ACCESS_BYTE_S | ACCESS_BYTE_E | ACCESS_BYTE_RW | ACCESS_BYTE_A,
+    );
+    gdt[GDT_ENTRY_BOOT_CS].set_flags(FLAGS_G | FLAGS_L);
 
-    unsafe {
-        let gdt_ptr = page_addr as *mut GdtEntry;
-        let gdt = slice::from_raw_parts_mut(gdt_ptr, 10);
+    gdt[GDT_ENTRY_BOOT_DS].set_base(0);
+    gdt[GDT_ENTRY_BOOT_DS].set_limit(u32::MAX);
+    gdt[GDT_ENTRY_BOOT_DS]
+        .set_access_flags(ACCESS_BYTE_P | ACCESS_BYTE_S | ACCESS_BYTE_RW | ACCESS_BYTE_A);
+    gdt[GDT_ENTRY_BOOT_DS].set_flags(FLAGS_G | FLAGS_DB);
 
-        gdt[GDT_ENTRY_BOOT_CS].set_base(0);
-        gdt[GDT_ENTRY_BOOT_CS].set_limit(u32::MAX);
-        gdt[GDT_ENTRY_BOOT_CS].set_access_flags(
-            ACCESS_BYTE_P | ACCESS_BYTE_S | ACCESS_BYTE_E | ACCESS_BYTE_RW | ACCESS_BYTE_A,
-        );
-        gdt[GDT_ENTRY_BOOT_CS].set_flags(FLAGS_G | FLAGS_L);
+    println!("GDT at: 0x{:x}", gdt_addr);
 
-        gdt[GDT_ENTRY_BOOT_DS].set_base(0);
-        gdt[GDT_ENTRY_BOOT_DS].set_limit(u32::MAX);
-        gdt[GDT_ENTRY_BOOT_DS]
-            .set_access_flags(ACCESS_BYTE_P | ACCESS_BYTE_S | ACCESS_BYTE_RW | ACCESS_BYTE_A);
-        gdt[GDT_ENTRY_BOOT_DS].set_flags(FLAGS_G | FLAGS_DB);
-
-        let gdtr = Gdtr {
-            limit: (size_of::<GdtEntry>() * 8) as u16,
-            base: gdt_ptr as u64,
-        };
-
-        asm!(
-            r#"
-            lgdt [{}]
-            nop
-            nop
-            "#,
-            in(reg) &gdtr,
-        );
-
-        set_cs((GDT_ENTRY_BOOT_CS * 8) as usize);
-
-        asm!(
-            r#"
-            nop
-            nop
-            mov rax, {}
-            mov ds, ax
-            mov es, ax
-            mov ss, ax
-            "#,
-            in(reg) GDT_ENTRY_BOOT_DS * 8,
-        );
+    Gdtr {
+        limit: (size_of::<GdtEntry>() * 40) as u16,
+        base: gdt_ptr as u64,
     }
 }
 
-// CS cannot be set directly but only indirectly with a far return...
+
+
+pub unsafe fn set_gdtr(gdtr: &Gdtr) {
+    asm!(
+        r#"
+        lgdt [{}]
+        nop
+        nop
+        "#,
+        in(reg) gdtr,
+    );
+
+    set_cs((GDT_ENTRY_BOOT_CS * 8) as usize);
+
+    asm!(
+        r#"
+        nop
+        nop
+        mov rax, {}
+        mov ds, ax
+        mov es, ax
+        mov ss, ax
+        "#,
+        in(reg) GDT_ENTRY_BOOT_DS * 8,
+    );
+}
+
+// CS cannot be set directly but only indirectly with a far return
 unsafe fn set_cs(cs: usize) {
     unsafe {
         asm!(
             "push {sel}",
-            "lea {tmp}, [6 + rip]",
+            "lea {tmp}, [55f + rip]",
             "push {tmp}",
             "retfq",
-            "nop",
-            "nop",
-            "nop",
-            "nop",
-            "nop",
-            "nop",
+            "55:",
             sel = in(reg) cs,
             tmp = lateout(reg) _,
             options(preserves_flags),

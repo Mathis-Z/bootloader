@@ -4,6 +4,8 @@ use uefi::boot::AllocateType;
 use uefi::mem::memory_map::{MemoryMap, MemoryMapMut, MemoryType};
 use uefi::println;
 
+use crate::simple_error::{simple_error, SimpleResult};
+
 pub(crate) mod gdt;
 pub(crate) mod paging;
 
@@ -44,7 +46,7 @@ pub fn allocate_pages(count: usize) -> usize {
     }
 }
 
-pub fn allocate_low_pages(count: usize) -> usize {
+pub fn allocate_low_pages(count: usize) -> SimpleResult<usize> {
     match uefi::boot::allocate_pages(
         AllocateType::MaxAddress(0x100000),
         MemoryType::LOADER_DATA,
@@ -54,21 +56,27 @@ pub fn allocate_low_pages(count: usize) -> usize {
             unsafe {
                 core::ptr::write_bytes(dst.as_mut(), 0, 4096 * count); // zero out pages
             }
-            dst.as_ptr() as usize
+            Ok(dst.as_ptr() as usize)
         }
         Err(err) => {
-            println!("Error: failed to allocate pages due to error: {}", err);
-            0
+            simple_error!("Error: failed to allocate pages due to error: {}", err)
         }
     }
 }
 
 pub fn copy_buf_to_aligned_address(buf: &[u8]) -> usize {
-    let page_count = (buf.len() - 1) / 4096 + 1;
+    const ALIGNMENT: usize = 1 << 21;
+
+    let blocks_needed = (buf.len() - 1) / ALIGNMENT + 2 + 300;
+
+    let page_count = blocks_needed * (ALIGNMENT / 4096);
 
     let dst = allocate_pages(page_count);
+    let rounded_dst = (dst + ALIGNMENT - 1) & !(ALIGNMENT - 1);
+    
     unsafe {
-        core::ptr::copy(buf.as_ptr(), dst as *mut u8, buf.len());
+        core::ptr::copy(buf.as_ptr(), rounded_dst as *mut u8, buf.len());
     }
-    dst
+
+    rounded_dst
 }

@@ -469,7 +469,7 @@ pub fn human_readable_size(size: u64) -> String {
 
 
 // This is safe assuming this bootloader is the only application running and it does not conflict with itself.
-fn open_protocol_unsafe<P>(handle: Handle) -> uefi::Result<ScopedProtocol<P>>
+pub fn open_protocol_unsafe<P>(handle: Handle) -> uefi::Result<ScopedProtocol<P>>
 where
     P: ProtocolPointer + ?Sized,
 {

@@ -2,13 +2,15 @@
 
 extern crate alloc;
 
+use alloc::string::String;
 use alloc::vec::Vec;
 use uefi::{
-    boot::MemoryType,
-    mem::memory_map::{MemoryMap, MemoryMapOwned},
+    boot::{self, MemoryType}, mem::memory_map::{MemoryMap, MemoryMapOwned}, proto::console::gop::GraphicsOutput
 };
 
-use crate::mem::allocate_low_pages;
+use crate::{disk::open_protocol_unsafe, mem::allocate_low_pages, simple_error::SimpleResult};
+
+use super::simple_error;
 
 #[repr(C, packed)]
 struct ScreenInfo {
@@ -73,17 +75,17 @@ pub enum KernelParam {
     _RootFlags,
     _SysSize,
     _RamSize,
-    _VidMode,
+    VidMode,
     _RootDev,
     _BootFlag,
     _Jump,
-    _Header,
-    _Version,
+    Header,
+    Version,
     _RealmodeSwitch,
     _StartSysSeg,
     _KernelVersion,
     TypeOfLoader,
-    _LoadFlags,
+    LoadFlags,
     _SetupMoveSize,
     Code32Start,
     RamdiskImage,
@@ -94,9 +96,9 @@ pub enum KernelParam {
     _ExtLoaderType,
     CmdLinePtr,
     _InitrdAddressMax,
-    _KernelAlignment,
+    KernelAlignment,
     RelocatableKernel,
-    _MinAlignment,
+    MinAlignment,
     XLoadflags,
     _CmdlineSize,
     _HardwareSubarch,
@@ -104,7 +106,7 @@ pub enum KernelParam {
     _PayloadOffset,
     _PayloadLength,
     _SetupData,
-    _PrefAddress,
+    PrefAddress,
     _InitSize,
     HandoverOffset,
 }
@@ -114,22 +116,25 @@ impl KernelParam {
         let (offset, size) = match self {
             KernelParam::SetupSects => (0x1f1, 1),
             KernelParam::_RootFlags => (0x1f2, 2),
-            KernelParam::_VidMode => (0x1fa, 2),
+            KernelParam::VidMode => (0x1fa, 2),
             KernelParam::_BootFlag => (0x1fe, 2),
-            KernelParam::_Header => (0x202, 4),
+            KernelParam::Header => (0x202, 4),
             KernelParam::TypeOfLoader => (0x210, 1),
+            KernelParam::LoadFlags => (0x211, 1),
             KernelParam::Code32Start => (0x214, 4),
             KernelParam::RamdiskImage => (0x218, 4),
             KernelParam::RamdiskSize => (0x21c, 4),
             KernelParam::HeapEndPtr => (0x224, 2),
             KernelParam::CmdLinePtr => (0x228, 4),
-            KernelParam::_KernelAlignment => (0x230, 4),
+            KernelParam::KernelAlignment => (0x230, 4),
             KernelParam::RelocatableKernel => (0x234, 1),
-            KernelParam::_MinAlignment => (0x235, 1),
+            KernelParam::MinAlignment => (0x235, 1),
             KernelParam::XLoadflags => (0x236, 2),
             KernelParam::_CmdlineSize => (0x238, 4),
+            KernelParam::PrefAddress => (0x258, 8),
             KernelParam::_InitSize => (0x260, 4),
             KernelParam::HandoverOffset => (0x264, 4),
+            KernelParam::Version => (0x0206, 2),
             _ => todo!(),
         };
         (offset - 0x1f1, size)
@@ -141,17 +146,27 @@ pub struct KernelParams {
 }
 
 impl KernelParams {
-    pub fn new(kernel_image: &Vec<u8>) -> KernelParams {
-        KernelParams {
-            buf: (kernel_image[0x1f1..0x268].to_vec()),
+    pub fn new(kernel_image: &Vec<u8>) -> SimpleResult<KernelParams> {
+        if kernel_image[0x01FE] != 0x55 || kernel_image[0x01FF] != 0xAA {
+            return simple_error!("Kernel image does not have the correct magic number");
         }
+
+        let hex_string: String = kernel_image[0x1f1..0x268]
+            .iter()
+            .map(|byte| alloc::format!("{:02x}", byte))
+            .collect();
+        uefi::println!("{}", hex_string);
+
+        Ok(KernelParams {
+            buf: (kernel_image[0x1f1..0x268].to_vec()),
+        })
     }
 
     pub fn get_param(&self, param: KernelParam) -> usize {
         let (offset, size) = param.offset_and_size();
 
         // pad with zeros
-        let mut bytes = [0u8; 8];
+        let mut bytes = [0u8; core::mem::size_of::<usize>()];
         bytes[..size].copy_from_slice(&self.buf[offset..offset + size]);
 
         usize::from_le_bytes(bytes)
@@ -166,8 +181,8 @@ impl KernelParams {
         old_slice.copy_from_slice(value_bytes);
     }
 
-    pub fn copy_into_zero_page(&self) -> usize {
-        let zero_page = allocate_low_pages(1);
+    pub fn copy_into_zero_page(&self) -> SimpleResult<usize> {
+        let zero_page = allocate_low_pages(1)?;
         unsafe {
             core::ptr::copy(
                 self.buf.as_ptr(),
@@ -177,19 +192,56 @@ impl KernelParams {
         }
         KernelParams::set_video_params(zero_page);
 
-        zero_page
+        Ok(zero_page)
     }
 
+    // this is partially guessed and partially taken from grub2 source code because there was not much documentation available
     pub fn set_video_params(zero_page: usize) {
-        // TODO: this is not working correctly
+        const VIDEO_TYPE_EFI: u8 = 0x70;    // linux kernel screen_info.h
+
         let screen_info = unsafe { &mut *(zero_page as *mut ScreenInfo) };
 
+        let gop_handle = boot::get_handle_for_protocol::<GraphicsOutput>().unwrap();
+        let mut gop = open_protocol_unsafe::<GraphicsOutput>(gop_handle).unwrap();
+
+        uefi::println!("GOP pixel format: {:?}", gop.current_mode_info().pixel_format());
+
+        // pretty sure about these
+        screen_info.orig_video_page = 0;
+        screen_info.orig_video_points = 16;
+        screen_info.lfb_width = gop.current_mode_info().resolution().0 as u16;
+        screen_info.lfb_height = gop.current_mode_info().resolution().1 as u16;
+        screen_info.lfb_depth = 32;
+        screen_info.lfb_linelength = gop.current_mode_info().stride() as u16 * (screen_info.lfb_depth >> 3);
+        screen_info.lfb_base = gop.frame_buffer().as_mut_ptr() as u32;
+        screen_info.ext_lfb_base = (gop.frame_buffer().as_mut_ptr() as u64 >> 32) as u32;
+        screen_info.capabilities |= 0b10;     // mark framebuffer address as 64 bit
+        screen_info.lfb_size = gop.frame_buffer().size() as u32;
+        
+        screen_info.orig_video_ega_bx = 0;
+
+        // for BGR8 (from grub2 source code)
+        // TODO: support pixel formats other than BGR8
+        screen_info.red_size = 8;
+        screen_info.red_pos = 16;
+        screen_info.green_size = 8;
+        screen_info.green_pos = 8;
+        screen_info.blue_size = 8;
+        screen_info.blue_pos = 0;
+        screen_info.rsvd_size = 8;
+        screen_info.rsvd_pos = 24;
+
+        // not so sure about these
         screen_info.orig_x = 0;
-        screen_info.orig_y = 25;
+        screen_info.orig_y = 0;
         screen_info.orig_video_cols = 80;
         screen_info.orig_video_lines = 25;
-        screen_info.orig_video_is_vga = 1;
-        screen_info.orig_video_points = 16;
+        screen_info.orig_video_is_vga = VIDEO_TYPE_EFI;
+        screen_info.orig_video_mode = 0;      // could also be 0x03
+
+        // sketchy
+        screen_info.ext_mem_k = ((32 * 0x100000) >> 10) as u16;
+
     }
 
     pub fn set_memory_map(zero_page: usize, mmap: &MemoryMapOwned) {
@@ -230,8 +282,8 @@ impl KernelParams {
     }
 }
 
-pub fn allocate_cmdline(cmdline: &str) -> usize {
-    let addr = allocate_low_pages(1);
+pub fn allocate_cmdline(cmdline: &str) -> SimpleResult<usize> {
+    let addr = allocate_low_pages(1)?;
 
     unsafe {
         let ptr = addr as *mut u8;
@@ -239,5 +291,5 @@ pub fn allocate_cmdline(cmdline: &str) -> usize {
             *ptr.offset(i as isize) = *byte;
         }
     }
-    addr
+    Ok(addr)
 }

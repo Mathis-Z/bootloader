@@ -441,6 +441,10 @@ impl Shell {
             ramdisk = Some(crate::disk::read_file(&ramdisk_image_path).or_else(|err| {
                 simple_error!("Could not read ramdisk image: {err}")
             })?);
+
+            println!("Ramdisk loaded at {:x}", ramdisk.as_ref().unwrap().as_ptr() as usize);
+            println!("Ramdisk size: {:x}", ramdisk.as_ref().unwrap().len());
+            
         }
 
         let mut kernel_image_path = self.cwd.clone();
@@ -452,7 +456,6 @@ impl Shell {
 
         let kernel_cmdline = &args[1];
 
-        crate::kernel::Kernel::new(kernel)?.start(kernel_cmdline, ramdisk);
-        Ok(())
+        crate::kernel::Kernel::new(kernel)?.start(kernel_cmdline, ramdisk)
     }
 }

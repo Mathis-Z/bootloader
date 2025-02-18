@@ -1,7 +1,5 @@
 use crate::mem::*;
 
-// this is the PML4 followed by the PDPT which are in turn followed by their PDs which are in turn followed by their PTs
-
 const PRESENT: u64 = 1 << 0;
 const RW: u64 = 1 << 1;
 const _USER_PAGE: u64 = 1 << 2;
@@ -44,8 +42,8 @@ pub unsafe fn prepare_identity_mapped_pml4() -> *mut PageTable {
 pub unsafe fn prepare_identity_mapped_pdpt(address: usize) -> *mut PageTable {
     let pdpt_ptr = PageTable::allocate();
 
-    for pd_idx in 0..100 {
-        // page tables for 100 GB RAM should be enough
+    for pd_idx in 0..16 {
+        // page tables for 16 GB RAM should be enough, TODO: make this dynamic
         (*pdpt_ptr).set_entry(
             pd_idx,
             prepare_identity_mapped_pd(address + pd_idx * 512 * 512 * 4096) as u64,
