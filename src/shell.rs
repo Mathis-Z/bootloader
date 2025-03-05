@@ -1,3 +1,10 @@
+/*
+This file contains the shell implementation. The shell calls all the other code so it is the root of the code. 
+It reads and parses the keyboard input and executes the commands which are plain Rust functions.
+Paths include the partitions they are on so we simulate all partitions being "mounted" at
+the root directory with the same name as the partition, e.g. /sda1 /sda2 /sdb1 etc.
+*/
+
 extern crate alloc;
 
 use alloc::{vec::Vec, string::String, string::ToString};
@@ -6,11 +13,12 @@ use uefi::{
     print, println,
     proto::{console::text::{Key, ScanCode}, BootPolicy},
 };
+use regex::Regex;
 
 use crate::{
     disk::{
         fs::{FileError, FsPath},
-        Partition,
+        Partition, StorageDevice,
     },
     simple_error::{simple_error, SimpleResult},
 };
@@ -30,8 +38,9 @@ pub struct Shell {
     quickstart_options: Vec<QuickstartOption>,
 }
 
+// chainloading .efi or loading a linux kernel
 pub enum QuickstartOption {
-    EFI { full_path: FsPath},
+    EFI { full_path: FsPath },
     Kernel { kernel_path: FsPath, cmdline: String, ramdisk_path: Option<FsPath> },
 }
 
@@ -42,17 +51,18 @@ impl Shell {
             cmd_history_idx: 0,
             cmd_history: Vec::new(),
             exit: false,
-            quickstart_options: crate::disk::find_quickstart_options().unwrap_or_else(|_| Vec::new()),
+            quickstart_options: Shell::find_quickstart_options().unwrap_or_else(|_| Vec::new()),
         }
     }
 
     pub fn enter(&mut self) {
         let _ = self.help();
-        println!("");
+        println!();
         let _ = self.quickstart_options();
 
         let _ = uefi::system::with_stdout(|stdout| stdout.enable_cursor(true));
 
+        // REPL loop
         while !self.exit {
             self.print_shell();
             let line = self.read_line();
@@ -139,7 +149,7 @@ impl Shell {
 
     pub fn clear_shell_line(&mut self, chars_to_clear: usize) {
         for _ in 0..chars_to_clear {
-            print!("\x08");
+            print!("\x08"); // backspace
         }
     }
 
@@ -166,6 +176,7 @@ impl Shell {
         }
     }
 
+    // this is just best-effort parsing so it's probably broken is some edge cases
     pub fn parse_command(&self, command: &str) -> Option<(String, Vec<String>)> {
         let mut cmd_parts = Vec::<String>::new();
         let mut new_cmd_part = String::new();
@@ -220,6 +231,7 @@ impl Shell {
         }
     }
 
+    // for simplicity, all commands return SimpleResult<()>
     fn help(&mut self) -> SimpleResult<()> {
         println!("This is the Yannik & Mathis boot shell :)\nAvailable commands are:");
         println!("- help");
@@ -234,6 +246,92 @@ impl Shell {
         println!("- quickstart [IDX]");
 
         Ok(())
+    }
+
+    // search all partitions for linux kernel images or the windows bootloader .efi
+    pub fn find_quickstart_options() -> SimpleResult<Vec<QuickstartOption>> {
+        let mut quickstart_options: Vec<QuickstartOption> = Vec::new();
+
+        for storage_device in StorageDevice::all()? {
+            let StorageDevice::Drive { partitions, .. } = storage_device else {
+                continue; // ignore CD drives
+            };
+
+            for partition in partitions {
+                let partition_name = partition.linux_name().to_string();
+                let Some(fstype) = partition.fstype() else {
+                    continue;   // Cannot read 'Unknown' filesystems anyway
+                };
+
+                let Some(fs) = partition.fs() else {
+                    continue;
+                };
+
+                if fstype == crate::disk::fs::FsType::Fat {
+                    const WINDOWS_EFI_PATH: &str = "/EFI/Microsoft/Boot/bootmgfw.efi";
+
+                    if let Ok(_) = fs.read_file(WINDOWS_EFI_PATH) {
+                        let full_path = FsPath::parse(alloc::format!("/{partition_name}{WINDOWS_EFI_PATH}")).unwrap();
+
+                        quickstart_options.push(QuickstartOption::EFI { full_path })
+                    }
+                }
+
+                for directory_to_search in alloc::vec!["/", "/boot"] {
+                    let Ok(dir) = fs.read_directory(directory_to_search) else {
+                        continue;
+                    };
+
+                    let cwd = FsPath::parse(alloc::format!("/{partition_name}{directory_to_search}")).unwrap();
+                    let files = dir.files();
+
+                    // For simplicity we assume that kernel image names will be like vmlinuz-<version> or bzImage-<version>
+                    // Otherwise the user has to go find their kernel image themself >:/
+                    let kernel_regex = Regex::new(r"^(vmlinuz|bzImage)-(.+)$").unwrap();
+                    let ramdisk_regex = Regex::new(r"^(initrd\.img|initramfs)-(.+)(\.img)?$").unwrap();
+
+                    let mut kernels = alloc::collections::btree_map::BTreeMap::new();
+                    let mut ramdisks = alloc::collections::btree_map::BTreeMap::new();
+
+                    for file in files {
+                        if !file.is_regular_file() || file.size() < 1000 {
+                            continue;
+                        }
+
+                        let file_name_cstring = file.name();
+                        let mut file_path = cwd.clone();
+                        file_path.push(&file_name_cstring);
+
+                        let file_name = file_name_cstring.to_string();
+                        
+                        let kernel_match = kernel_regex.captures(&file_name);
+                        let ramdisk_match = ramdisk_regex.captures(&file_name);
+
+                        if let Some(caps) = kernel_match {
+                            if let Some(version) = caps.get(2) {
+                                kernels.insert(version.as_str().to_string(), file_path);
+                            }
+                        } else if let Some(caps) = ramdisk_match {
+                            if let Some(version) = caps.get(2) {
+                                ramdisks.insert(version.as_str().to_string(), file_path);
+                            }
+                        }
+                    }
+
+                    for (version, kernel_path) in kernels {
+                        quickstart_options.push(
+                            QuickstartOption::Kernel {
+                                kernel_path: kernel_path.clone(),
+                                ramdisk_path: ramdisks.get(&version).cloned(),
+                                cmdline: alloc::format!("root=/dev/{}", partition_name)
+                            }
+                        );
+                    }
+                }
+            }
+        }
+
+        Ok(quickstart_options)
     }
 
     fn quickstart(&mut self, args: Vec<String>) -> SimpleResult<()> {
@@ -289,6 +387,7 @@ impl Shell {
         Ok(())
     }
 
+    // print directory contents or partitions if executing "ls /"
     fn ls(&mut self, args: Vec<String>) -> SimpleResult<()> {
         let mut path = self.cwd.clone();
 

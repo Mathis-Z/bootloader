@@ -1,3 +1,5 @@
+// This creates a simple, identity-mapped page table.
+
 use crate::mem::*;
 
 const PRESENT: u64 = 1 << 0;

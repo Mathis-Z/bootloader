@@ -1,3 +1,5 @@
+// This file contains some abstractions from the UEFI API so we don't have to work with handles or device paths in much of the other code.
+
 extern crate alloc;
 
 use alloc::{boxed::Box, fmt, format, vec::Vec, string::String};
@@ -7,7 +9,6 @@ use uefi::proto::device_path::text::{AllowShortcuts, DisplayOnly};
 use uefi::proto::device_path::{DevicePathNode, DeviceSubType, DeviceType};
 
 use crate::simple_error::{simple_error, SimpleResult};
-use crate::QuickstartOption;
 use ext4_view::{Ext4, Ext4Read};
 use fs::{Filesystem, FsPath};
 use uefi::boot::{self, OpenProtocolParams, ScopedProtocol};
@@ -21,8 +22,6 @@ use uefi::{
 };
 
 use crate::simple_error::{self, SimpleError};
-use regex::Regex;
-use alloc::string::ToString;
 
 pub mod fs;
 
@@ -57,9 +56,11 @@ pub enum StorageDevice {
     }
 }
 
-// while statics are not ideal this should be fine since we are single-threaded and it makes for cleaner code
+// While statics are not ideal this should be fine since we are single-threaded and it makes for cleaner code.
+// This is filled lazily and reused if the block devices have not changed.
 static mut STORAGE_DEVICES: Option<(Vec<Handle>, Vec<StorageDevice>)> = None;
 
+// StorageDevice abstracts from the storage API provided by UEFI so we don't have to deal with device paths and handles.
 impl StorageDevice {
     pub fn linux_name(&self) -> &str {
         match self {
@@ -190,7 +191,7 @@ impl StorageDevice {
         };
 
         if devices_changed {
-            simple_error!("The block devices have changed. The names of existing devices may have changed as well. Please check 'lsblk'.")
+            simple_error!("The block devices have changed. The names of existing devices may have changed as well. Please check with 'lsblk'.")
         } else {
             Ok(devices)
         }
@@ -297,7 +298,6 @@ impl Partition {
         self.fs.as_mut()
     }
 
-    // TODO: is this the right place for this method?
     pub fn device_path_for_file<S: AsRef<str>>(&self, file_path_str: S) -> Option<Box<DevicePath>> {
         let file_path_str= file_path_str.as_ref();
 
@@ -364,92 +364,6 @@ impl Medium {
     }
 }
 
-// search all partitions for linux kernel images or the windows bootloader .efi
-pub fn find_quickstart_options() -> SimpleResult<Vec<QuickstartOption>> {
-    let mut quickstart_options: Vec<QuickstartOption> = Vec::new();
-
-    for storage_device in StorageDevice::all()? {
-        let StorageDevice::Drive { partitions, .. } = storage_device else {
-            continue; // ignore CD drives
-        };
-
-        for partition in partitions {
-            let partition_name = partition.linux_name().to_string();
-            let Some(fstype) = partition.fstype() else {
-                continue;   // Cannot read 'Unknown' filesystems anyway
-            };
-
-            let Some(fs) = partition.fs() else {
-                continue;
-            };
-
-            if fstype == fs::FsType::Fat {
-                const WINDOWS_EFI_PATH: &str = "/EFI/Microsoft/Boot/bootmgfw.efi";
-
-                if let Ok(_) = fs.read_file(WINDOWS_EFI_PATH) {
-                    let full_path = FsPath::parse(format!("/{partition_name}{WINDOWS_EFI_PATH}")).unwrap();
-
-                    quickstart_options.push(QuickstartOption::EFI { full_path })
-                }
-            }
-
-            for directory_to_search in alloc::vec!["/", "/boot"] {
-                let Ok(dir) = fs.read_directory(directory_to_search) else {
-                    continue;
-                };
-
-                let cwd = FsPath::parse(format!("/{partition_name}{directory_to_search}")).unwrap();
-                let files = dir.files();
-
-                // For simplicity we assume that kernel image names will be like vmlinuz-<version> or bzImage-<version>
-                // Otherwise the user has to go find their kernel image themself >:/
-                let kernel_regex = Regex::new(r"^(vmlinuz|bzImage)-(.+)$").unwrap();
-                let ramdisk_regex = Regex::new(r"^(initrd\.img|initramfs)-(.+)(\.img)?$").unwrap();
-
-                let mut kernels = alloc::collections::btree_map::BTreeMap::new();
-                let mut ramdisks = alloc::collections::btree_map::BTreeMap::new();
-
-                for file in files {
-                    if !file.is_regular_file() || file.size() < 1000 {
-                        continue;
-                    }
-
-                    let file_name_cstring = file.name();
-                    let mut file_path = cwd.clone();
-                    file_path.push(&file_name_cstring);
-
-                    let file_name = file_name_cstring.to_string();
-                    
-                    let kernel_match = kernel_regex.captures(&file_name);
-                    let ramdisk_match = ramdisk_regex.captures(&file_name);
-
-                    if let Some(caps) = kernel_match {
-                        if let Some(version) = caps.get(2) {
-                            kernels.insert(version.as_str().to_string(), file_path);
-                        }
-                    } else if let Some(caps) = ramdisk_match {
-                        if let Some(version) = caps.get(2) {
-                            ramdisks.insert(version.as_str().to_string(), file_path);
-                        }
-                    }
-                }
-
-                for (version, kernel_path) in kernels {
-                    quickstart_options.push(
-                        QuickstartOption::Kernel {
-                            kernel_path: kernel_path.clone(),
-                            ramdisk_path: ramdisks.get(&version).cloned(),
-                            cmdline: alloc::format!("root=/dev/{}", partition_name)
-                        }
-                    );
-                }
-            }
-        }
-    }
-
-    Ok(quickstart_options)
-}
-
 
 pub fn human_readable_size(size: u64) -> String {
     const K: u64 = 1024;
@@ -457,11 +371,11 @@ pub fn human_readable_size(size: u64) -> String {
     const G: u64 = 1024 * M;
 
     if size >= 10 * G {
-        format!("{:>4} GB", size / G)
+        format!("{:>4} GiB", size / G)
     } else if size >= 10 * M {
-        format!("{:>4} MB", size / M)
+        format!("{:>4} MiB", size / M)
     } else if size >= 10 * K {
-        format!("{:>4} KB", size / K)
+        format!("{:>4} KiB", size / K)
     } else {
         format!("{:>4} B ", size)
     }
@@ -469,6 +383,10 @@ pub fn human_readable_size(size: u64) -> String {
 
 
 // This is safe assuming this bootloader is the only application running and it does not conflict with itself.
+// Unfortunately, we cannot always open a protocol safely because e.g. opening the disk protocol on the handle for an entire disk
+// will lock the handles for the partitions of that disk. However, releasing the lock on the disk handle will
+// not release the lock on the partition handles (so we can never open the disk protocol safely on them).
+// This is probably a bug in the OVMF firmware.
 pub fn open_protocol_unsafe<P>(handle: Handle) -> uefi::Result<ScopedProtocol<P>>
 where
     P: ProtocolPointer + ?Sized,
@@ -501,7 +419,7 @@ impl Ext4Read for Medium {
     }
 }
 
-
+// implementing some simple helper functions for DevicePaths that are not in the UEFI crate :(
 trait DevicePathConvenience {
     fn node_after_pci_node(&self) -> Option<&DevicePathNode>;
     fn is_partition(&self) -> bool;
@@ -511,7 +429,7 @@ trait DevicePathConvenience {
 
 impl DevicePathConvenience for DevicePath {
     fn node_after_pci_node(&self) -> Option<&DevicePathNode> {
-        self.node_iter().nth(2) // Assuming there will always be a PciRoot node followed by a PCI node
+        self.node_iter().nth(2) // Assuming there will always be a PciRoot node followed by a PCI node; this was true for all devices I tested
     }
 
     fn get_node(&self, full_type: (DeviceType, DeviceSubType)) -> Option<&DevicePathNode> {

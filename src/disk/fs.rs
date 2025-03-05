@@ -1,3 +1,11 @@
+/*
+We use the UEFI FAT file API to read FAT filesystems and the ext4_view crate to read ext4 filesystems.
+To unify the access to both filesystems, we define a trait Filesystem that abstracts the differences between the two filesystems.
+For this new API we also define File, Directory and FileError types.
+We also define the FsPath struct to represent an absolute path on a filesystem. This path includes the partition name as if all
+partitions were "mounted" at the root with their names as directories.
+*/
+
 extern crate alloc;
 
 use core::fmt::Display;
@@ -301,6 +309,7 @@ impl From<ext4_view::FileType> for FileType {
     }
 }
 
+// implementation for ext4_view crate
 impl Filesystem for Ext4 {
     fn format(&self) -> FsType {
         FsType::Ext4
@@ -349,7 +358,7 @@ impl Filesystem for Ext4 {
     }
 }
 
-// implementation for uefi FAT driver
+// implementation for UEFI FAT API
 impl Filesystem for ScopedProtocol<SimpleFileSystem> {
     fn format(&self) -> FsType {
         FsType::Fat
@@ -404,6 +413,7 @@ impl Filesystem for ScopedProtocol<SimpleFileSystem> {
     }
 }
 
+// helper function for impl Filesystem for ScopedProtocol<SimpleFileSystem>
 fn uefi_get_file_handle<S: AsRef<str>>(
     fs: &mut SimpleFileSystem,
     path: S,

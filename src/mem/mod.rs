@@ -1,3 +1,5 @@
+// These are some helper functions related to memory management.
+
 extern crate alloc;
 
 use uefi::boot::AllocateType;

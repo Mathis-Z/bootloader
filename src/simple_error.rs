@@ -1,3 +1,8 @@
+/*
+We define a simple error type that either contains an error message or the unit value (). This is a bit lazy
+but it simplifies the error handling since we don't have to bother with converting/handling different error types. 
+*/
+
 extern crate alloc;
 
 use core::fmt;

@@ -1,3 +1,5 @@
+// This file contains the high-level logic to load and start a linux kernel image.
+
 extern crate alloc;
 
 mod params;
@@ -14,7 +16,7 @@ use self::params::*;
 
 pub struct Kernel {
     blob: Vec<u8>,
-    kernel_params: KernelParams,
+    kernel_params: KernelParams,    // kernel parameters parsed from the table starting at +0x1f1 of the kernel image
 }
 
 impl Kernel {
@@ -187,7 +189,7 @@ impl Kernel {
         unreachable!();
     }
 
-    // https://github.com/rust-osdev/bootloader/blob/main/common/src/lib.rs
+    // Stolen from https://github.com/rust-osdev/bootloader/blob/main/common/src/lib.rs
     unsafe fn run(page_table_addr: usize, stack_top: usize, entry_point: usize, boot_info: usize) -> ! {
         unsafe {
             asm!(

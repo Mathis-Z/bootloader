@@ -1,3 +1,6 @@
+// This creates and sets a simple GDT containing flat 4G segments as required by the 64bit linux kernel entry point
+// https://wiki.osdev.org/Global_Descriptor_Table
+
 use core::{arch::asm, mem::size_of, slice};
 
 use crate::mem::*;
