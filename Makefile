@@ -1,4 +1,4 @@
-SYSTEM_DRIVES = -drive format=vdi,file="/home/mathisz/VirtualBox VMs/windows_and_ubuntu/windows_and_ubuntu.vdi"
+SYSTEM_DRIVES = -drive format=vdi,file="/home/mathisz/VirtualBox VMs/ubuntu13.10/ubuntu13.10.vdi"
 EFI_DIR = qemu/x86/esp
 CARGO_TARGET = x86_64-unknown-uefi
 
@@ -14,7 +14,7 @@ COMMON_QEMU_SETTINGS = -m 4G -smp cores=8 -vga std
 build:
 	cargo build --target $(CARGO_TARGET)
 	mkdir -p $(EFI_DIR)/efi/boot
-	cp target/$(CARGO_TARGET)/debug/myboot.efi $(EFI_DIR)/efi/boot/bootx64.efi
+	cp target/$(CARGO_TARGET)/debug/bs2boot.efi $(EFI_DIR)/efi/boot/bootx64.efi
 
 run: build
 	qemu-system-x86_64 $(COMMON_QEMU_SETTINGS) $(DRIVES)
