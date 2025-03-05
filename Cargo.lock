@@ -54,9 +54,9 @@ checksum = "19d374276b40fb8bbdee95aef7c7fa6b5316ec764510eb64b8dd0e2ed0d7e7f5"
 
 [[package]]
 name = "ext4-view"
-version = "0.6.1"
+version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6ba127239ac64b576d82fa07a4a6d555e36eec0046e8e4a15fef4ea397966f99"
+checksum = "0f48f7512d03471f017afa11483938ef2175238bb80cdb361879fc5338ca6518"
 dependencies = [
  "bitflags",
  "crc",

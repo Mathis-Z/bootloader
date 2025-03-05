@@ -5,7 +5,7 @@ This project is a UEFI bootloader similar to grub, written in Rust. It can boot 
 ## Features
 - Starting x86_64 Linux bzImages (oldest tested kernel 3.11.0) with both the deprecated EFI handover protocol and the normal [64 bit boot protocol](https://github.com/torvalds/linux/blob/v4.16/Documentation/x86/boot.txt)
 - EFI chainloading (starting other .efi applications like grub or the Windows bootloader)
-- Reading from FAT, ext2 and ext4 file systems (The crate for ext2/4 file systems can currently only read them if the journal is empty! Mount and unmount your disk to empty the journal if necessary)
+- Reading from FAT, ext2 and ext4 file systems (The crate for ext2/4 file systems can only read empty journals or journals with a specific feature set. Mount and unmount your disk to empty the journal if necessary.)
 
 ## Missing Features
 
