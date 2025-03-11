@@ -1,4 +1,4 @@
-// This file contains the high-level logic to load and start a linux kernel image.
+// This file contains the logic to load and start a linux kernel image.
 
 extern crate alloc;
 
