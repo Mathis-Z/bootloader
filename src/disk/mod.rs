@@ -47,12 +47,12 @@ pub fn read_file(path: &FsPath) -> SimpleResult<Vec<u8>> {
 pub enum StorageDevice {
     Drive {
         linux_name: String,
-        medium: Medium,
+        size: u64,
         partitions: Vec<Partition>,
     },
     CdRom {
         linux_name: String,
-        medium: Medium,
+        size: u64,
     }
 }
 
@@ -71,8 +71,8 @@ impl StorageDevice {
 
     pub fn size(&self) -> u64 {
         match self {
-            StorageDevice::Drive { medium, .. } => medium.size,
-            StorageDevice::CdRom { medium, .. } => medium.size,
+            StorageDevice::Drive { size, .. } => *size,
+            StorageDevice::CdRom { size, .. } => *size,
         }
     }
 
@@ -124,15 +124,10 @@ impl StorageDevice {
             let scoped_prot = open_protocol_unsafe::<BlockIO>(*root_handle).unwrap();
             let root_block_io = scoped_prot.get().unwrap();
             let root_media = root_block_io.media();
-    
-            let root_medium = Medium {
-                handle: *root_handle,
-                media_id: root_media.media_id(),
-                size: root_media.last_block() * (root_media.block_size() as u64), // is this correct?
-            };
+            let root_size = root_media.last_block() * (root_media.block_size() as u64); // is this correct?
     
             if let DriveType::Cd = drive_type {
-                drives.push(StorageDevice::CdRom { medium: root_medium, linux_name: format!("sr{}", cd_devices) });
+                drives.push(StorageDevice::CdRom { linux_name: format!("sr{}", cd_devices), size: root_size });
                 cd_devices += 1;
                 // there are no partitions on CD drives; skip to next drive
                 // actually, in testing my CD hat multiple handles which might be important but for now let's just ignore that
@@ -149,22 +144,19 @@ impl StorageDevice {
                     let scoped_prot = open_protocol_unsafe::<BlockIO>(handle).unwrap();
                     let block_io = scoped_prot.get().unwrap();
                     let media = block_io.media();
-    
-                    let medium = Medium {
-                        handle,
-                        media_id: media.media_id(),
-                        size: media.last_block() * (media.block_size() as u64), // TODO: is this correct?
-                    };
-    
-                    partitions.push(Partition {
-                        linux_name: match drive_type {
+
+                    let partition = Partition::new(
+                        match drive_type {
                             DriveType::Sdx => format!("sd{}{}", ('a' as u8 + sdx_devices) as char, harddrive.partition_number()),
                             DriveType::Nvme { namespace } => format!("nvme{}n{}p{}", nvme_devices, namespace, harddrive.partition_number()),
                             DriveType::Cd => unreachable!(),
                         },
-                        fs: medium.open_fs(),
-                        medium,
-                    });
+                        handle,
+                        media.media_id(),
+                        media.last_block() * (media.block_size() as u64), // TODO: is this correct?
+                    );
+
+                    partitions.push(partition);
                 }
             }
     
@@ -174,7 +166,7 @@ impl StorageDevice {
                     DriveType::Nvme { namespace } => format!("nvme{}n{}", nvme_devices, namespace),
                     DriveType::Cd => unreachable!(),
                 },
-                medium: root_medium,
+                size: root_size,
                 partitions,
             });
     
@@ -244,13 +236,55 @@ impl fmt::Display for StorageDevice {
     }
 }
 
+struct DiskIoMediaIdPair {
+    disk_io: ScopedProtocol<DiskIo>,
+    media_id: u32,
+}
+
 pub struct Partition {
     linux_name: String,
-    medium: Medium,
+    handle: Handle,
+    media_id: u32,
+    size: u64,
     fs: Option<Box<dyn Filesystem>>,
 }
 
 impl Partition {
+    pub fn new(
+        linux_name: String,
+        handle: Handle,
+        media_id: u32,
+        size: u64,
+    ) -> Self {
+        let mut partition = Partition {
+            linux_name,
+            handle,
+            media_id,
+            size,
+            fs: None,
+        };
+
+        partition.fs = partition.open_fs();
+        partition
+    }
+
+    pub fn open_fs(&self) -> Option<Box<dyn Filesystem>> {
+        if let Ok(sfs) = open_protocol_unsafe::<SimpleFileSystem>(self.handle) {
+            return Some(Box::new(sfs));
+        }
+
+        let disk_io_media_id_pair = DiskIoMediaIdPair {
+            disk_io: open_protocol_unsafe::<DiskIo>(self.handle).unwrap(),
+            media_id: self.media_id,
+        };
+
+        if let Ok(ext) = Ext4::load(Box::new(disk_io_media_id_pair)) {
+            return Some(Box::new(ext));
+        }
+
+        None
+    }
+
     pub fn linux_name(&self) -> &str {
         self.linux_name.as_str()
     }
@@ -325,7 +359,7 @@ impl Partition {
 
     fn device_path(&self) -> Option<Box<DevicePath>> {
         let mut scoped_prot =
-            uefi::boot::open_protocol_exclusive::<DevicePath>(self.medium.handle).ok()?;
+            uefi::boot::open_protocol_exclusive::<DevicePath>(self.handle).ok()?;
         Some(scoped_prot.get_mut()?.to_boxed())
     }
 }
@@ -336,31 +370,9 @@ impl fmt::Display for Partition {
             f,
             "{}  {}  format: {}",
             self.linux_name(),
-            human_readable_size(self.medium.size),
+            human_readable_size(self.size),
             self.fstype_as_str(),
         )
-    }
-}
-
-// TODO: Can we merge Medium into Partition?
-#[derive(Clone, Copy)]
-pub struct Medium {
-    pub handle: Handle,
-    pub media_id: u32,
-    pub size: u64,
-}
-
-impl Medium {
-    pub fn open_fs(self) -> Option<Box<dyn Filesystem>> {
-        if let Ok(sfs) = open_protocol_unsafe::<SimpleFileSystem>(self.handle) {
-            return Some(Box::new(sfs));
-        }
-
-        if let Ok(ext) = Ext4::load(Box::new(self)) {
-            return Some(Box::new(ext));
-        }
-
-        None
     }
 }
 
@@ -404,15 +416,15 @@ where
 }
 
 
-impl Ext4Read for Medium {
+impl Ext4Read for DiskIoMediaIdPair {
     fn read(
         &mut self,
         start_byte: u64,
         dst: &mut [u8],
     ) -> Result<(), Box<dyn core::error::Error + Send + Sync + 'static>> {
-        let disk_io = open_protocol_unsafe::<DiskIo>(self.handle).unwrap();
+        // println!("Reading ext4 {} bytes at {}-{}", dst.len(), start_byte, start_byte+dst.len() as u64);
 
-        match disk_io.read_disk(self.media_id, start_byte, dst) {
+        match self.disk_io.read_disk(self.media_id, start_byte, dst) {
             Ok(()) => Ok(()),
             Err(uefi_error) => Err(Box::new(SimpleError::from(uefi_error))),
         }
