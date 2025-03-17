@@ -1,15 +1,16 @@
 ## UEFI Boot Process
 
 ![Boot Process Diagram](img/bootloader_process.png)
+[Wikimedia](https://upload.wikimedia.org/wikipedia/commons/1/17/UEFI_boot_process.png)
 
 1. The computer is turned on and the UEFI firmware on the motherboard starts initializing the hardware.
-The UEFI firmware looks for attached drives that contain EFI partitions. Depending on the boot order set in the UEFI firmware,
-one of the EFI partitions is selected and the EFI application (typically a bootloader) is started.
-UEFI looks for this application at /efi/boot/bootx64.efi (for x86 systems) on the EFI partition.
+The UEFI firmware looks for attached drives that contain EFI system partitions (ESP). Depending on the boot order set in the UEFI firmware,
+one of the ESPs is selected and the EFI application (typically a bootloader) is started.
+UEFI looks for this application at \EFI\BOOT\BOOTX64.EFI (for x86 systems) on the ESP.
 2. The EFI application uses the UEFI API (boot services) to interface with hardware and perform its job,
 which is usually either loading a kernel directly (Windows bootloader or Linux kernel EFI stub) or displaying a menu to the user,
 to allow an OS selection (grub).
-3. The kernel then starts processes, loads drivers etc. The bootloader usually terminates the UEFI boot services so the OS takes takes control of the system.
+3. The kernel then starts processes, loads drivers etc. The bootloader usually terminates the UEFI boot services so the OS takes control of the system.
 Only the UEFI runtime services can be accessed after that which allow reading/setting of UEFI variables.
 
 ## BIOS Boot Process
@@ -118,3 +119,11 @@ In the spirit of "rewrite in Rust" these could be reimplemented (and then merged
 ## Multiboot
 
 [Multiboot](https://wiki.osdev.org/Multiboot) is a specification for a standardized handover process between bootloader and OS. This can be used to boot some exotic operating systems but I could not find many that support this. If you wanted to write your own OS though, then this would probably the way to make it bootable. I did not implement Multiboot in this bootloader.
+
+## Boot Loader Specification
+
+The [Boot Loader Specification](https://uapi-group.org/specifications/specs/boot_loader_specification/)
+is a proposed standard for configuring the boot menu entries of a system.
+In a nutshell, instead of the bootloader searching for bootable OS kernels,
+the OS should create `/loader/entries/*.conf` files in the EFI system partition (ESP) for every bootable kernel.
+The use of BLS is not very widespread so I did not implement it, although this should not be a difficult addition.
