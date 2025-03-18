@@ -17,8 +17,7 @@ use regex::Regex;
 
 use crate::{
     disk::{
-        fs::{FileError, FsPath},
-        Partition, StorageDevice,
+        fs::{FileError, FsPath}, Storage, StorageDevice
     },
     simple_error::{simple_error, SimpleResult},
 };
@@ -34,8 +33,9 @@ pub struct Shell {
     cmd_history_idx: usize,
     cmd_history: Vec<String>,
     cwd: FsPath,
-    pub exit: bool,
+    exit: bool,
     quickstart_options: Vec<QuickstartOption>,
+    storage: Storage
 }
 
 // chainloading .efi or loading a linux kernel
@@ -46,13 +46,17 @@ pub enum QuickstartOption {
 
 impl Shell {
     pub fn new() -> Shell {
-        Shell {
+        let mut shell = Shell {
             cwd: FsPath::new(),
             cmd_history_idx: 0,
             cmd_history: Vec::new(),
             exit: false,
-            quickstart_options: Shell::find_quickstart_options().unwrap_or_else(|_| Vec::new()),
-        }
+            quickstart_options: Vec::new(),
+            storage: Storage::new().expect("Could not initialize storage"),
+        };
+
+        shell.quickstart_options = shell.find_quickstart_options().unwrap_or_else(|_| Vec::new());
+        shell
     }
 
     pub fn enter(&mut self) {
@@ -249,10 +253,10 @@ impl Shell {
     }
 
     // search all partitions for linux kernel images or the windows bootloader .efi
-    pub fn find_quickstart_options() -> SimpleResult<Vec<QuickstartOption>> {
+    pub fn find_quickstart_options(&mut self) -> SimpleResult<Vec<QuickstartOption>> {
         let mut quickstart_options: Vec<QuickstartOption> = Vec::new();
 
-        for storage_device in StorageDevice::all()? {
+        for storage_device in self.storage.devices()? {
             let StorageDevice::Drive { partitions, .. } = storage_device else {
                 continue; // ignore CD drives
             };
@@ -398,7 +402,7 @@ impl Shell {
         }
 
         if let Some(partition_name) = path.components.first() {
-            let partition = Partition::find_by_name(partition_name)?;
+            let partition = self.storage.partition_by_name(partition_name)?;
 
             let Some(fs) = partition.fs() else {
                 return simple_error!("The partition's filesystem could not be read.");
@@ -416,7 +420,7 @@ impl Shell {
                 }
             }
         } else {
-            for partition in Partition::all()? {
+            for partition in self.storage.partitions()? {
                 println!("{partition}");
             }
             Ok(())
@@ -451,7 +455,7 @@ impl Shell {
             return Ok(());
         };
 
-        let partition = Partition::find_by_name(partition_name)?;
+        let partition = self.storage.partition_by_name(partition_name)?;
 
         let Some(fs) = partition.fs() else {
             return simple_error!("The partition's filesystem could not be read.");
@@ -480,7 +484,7 @@ impl Shell {
             return simple_error!("/ is not an EFI -.-");
         };
 
-        let partition = Partition::find_by_name(&partition_name)?;
+        let partition = self.storage.partition_by_name(&partition_name)?;
 
         let Some(fs) = partition.fs() else {
             return simple_error!("The partition's filesystem could not be read.");
@@ -537,7 +541,7 @@ impl Shell {
             let mut ramdisk_image_path = self.cwd.clone();
             ramdisk_image_path.push(&args[2]);
 
-            ramdisk = Some(crate::disk::read_file(&ramdisk_image_path).or_else(|err| {
+            ramdisk = Some(self.storage.read_file(&ramdisk_image_path).or_else(|err| {
                 simple_error!("Could not read ramdisk image: {err}")
             })?);
 
@@ -549,7 +553,7 @@ impl Shell {
         let mut kernel_image_path = self.cwd.clone();
         kernel_image_path.push(&args[0]);
 
-        let kernel = crate::disk::read_file(&kernel_image_path).or_else(|err| {
+        let kernel = self.storage.read_file(&kernel_image_path).or_else(|err| {
             simple_error!("Could not read kernel image: {err}")
         })?;
 

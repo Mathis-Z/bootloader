@@ -60,14 +60,14 @@ pub enum FileError {
     NotFound,
     NotAFile,
     NotADirectory,
-    Other(String),
+    Other,
 }
 
 impl From<uefi::Error> for FileError {
     fn from(error: uefi::Error) -> Self {
         match error.status() {
             uefi::Status::NOT_FOUND => FileError::NotFound,
-            _ => FileError::Other(alloc::format!("{error}")),
+            _ => FileError::Other,
         }
     }
 }
@@ -323,7 +323,7 @@ impl Filesystem for Ext4 {
             Err(error) => Err(match error {
                 Ext4Error::NotFound => FileError::NotFound,
                 Ext4Error::IsADirectory | Ext4Error::IsASpecialFile => FileError::NotAFile,
-                other_error => FileError::Other(alloc::format!("{other_error}")),
+                _ => FileError::Other,
             }),
         }
     }
@@ -352,7 +352,7 @@ impl Filesystem for Ext4 {
             Err(error) => Err(match error {
                 Ext4Error::NotFound => FileError::NotFound,
                 Ext4Error::IsADirectory | Ext4Error::IsASpecialFile => FileError::NotAFile,
-                other_error => FileError::Other(alloc::format!("{other_error}")),
+                _ => FileError::Other,
             }),
         }
     }
@@ -420,11 +420,11 @@ fn uefi_get_file_handle<S: AsRef<str>>(
 ) -> Result<FileHandle, FileError> {
     let mut root_directory = match fs.open_volume() {
         Ok(root_directory) => root_directory,
-        Err(efi_error) => return Err(FileError::Other(alloc::format!("{efi_error}"))),
+        Err(_) => return Err(FileError::Other),
     };
 
     let Ok(cstring_path) = CString16::try_from(path.as_ref()) else {
-        return Err(FileError::Other(alloc::format!("Path conversion to CString16 failed")));
+        return Err(FileError::Other);
     };
 
     let mut uefi_path = uefi::fs::PathBuf::new();

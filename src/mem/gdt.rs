@@ -61,10 +61,6 @@ impl GdtEntry {
     }
 }
 
-pub fn allocate_page_for_gdt() -> SimpleResult<usize> {
-    allocate_low_pages(1)
-}
-
 pub fn create_simple_gdtr() -> Gdtr {
     let gdt_addr = allocate_low_pages(1).unwrap();
 

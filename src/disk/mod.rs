@@ -25,23 +25,9 @@ use crate::simple_error::{self, SimpleError};
 
 pub mod fs;
 
-pub fn read_file(path: &FsPath) -> SimpleResult<Vec<u8>> {
-    let Some(partition_name) = path.components.first() else {
-        return simple_error!("/ is not a file.");
-    };
-
-    let partition = Partition::find_by_name(partition_name)?;
-
-    let Some(fs) = partition.fs() else {
-        return simple_error!("The partition's filesystem could not be read.");
-    };
-
-    match fs.read_file(&path.path_on_partition()) {
-        Err(fs::FileError::NotAFile) => simple_error!("{path} is not a file."),
-        Err(fs::FileError::NotFound) => simple_error!("{path} not found."),
-        Err(_) => simple_error!("An error occurred."),
-        Ok(data) => Ok(data),
-    }
+pub struct Storage {
+    devices: Vec<StorageDevice>,
+    last_seen_block_handles: Vec<Handle>,   // used to quickly check if we need to update the devices
 }
 
 pub enum StorageDevice {
@@ -56,11 +42,89 @@ pub enum StorageDevice {
     }
 }
 
-// While statics are not ideal this should be fine since we are single-threaded and it makes for cleaner code.
-// This is filled lazily and reused if the block devices have not changed.
-static mut STORAGE_DEVICES: Option<(Vec<Handle>, Vec<StorageDevice>)> = None;
+pub struct Partition {
+    linux_name: String,
+    handle: Handle,
+    media_id: u32,
+    size: u64,
+    fs: Option<Box<dyn Filesystem>>,
+}
 
-// StorageDevice abstracts from the storage API provided by UEFI so we don't have to deal with device paths and handles.
+struct DiskIoMediaIdPair {
+    disk_io: ScopedProtocol<DiskIo>,
+    media_id: u32,
+}
+
+impl Storage {
+    pub fn new() -> SimpleResult<Storage> {
+        let block_handles = uefi::boot::find_handles::<BlockIO>().unwrap();
+        let devices = StorageDevice::from_block_handles(&block_handles)?;
+        Ok(Storage {
+            devices,
+            last_seen_block_handles: block_handles,
+        })
+    }
+
+    pub fn devices(&mut self) -> SimpleResult<&mut Vec<StorageDevice>> {
+        let block_handles = uefi::boot::find_handles::<BlockIO>().unwrap();
+        let devices_changed = self.last_seen_block_handles != block_handles;
+
+        if devices_changed {
+            self.devices = StorageDevice::from_block_handles(&block_handles)?;
+            self.last_seen_block_handles = block_handles;
+            return simple_error!("The block devices have changed. The names of existing devices may have changed as well. Please check with 'lsblk'.")
+        }
+
+        Ok(self.devices.as_mut())
+    }
+
+    pub fn read_file(&mut self, path: &FsPath) -> SimpleResult<Vec<u8>> {
+        let Some(partition_name) = path.components.first() else {
+            return simple_error!("/ is not a file.");
+        };
+    
+        let partition = self.partition_by_name(partition_name)?;
+    
+        let Some(fs) = partition.fs() else {
+            return simple_error!("The partition's filesystem could not be read.");
+        };
+    
+        match fs.read_file(&path.path_on_partition()) {
+            Err(fs::FileError::NotAFile) => simple_error!("{path} is not a file."),
+            Err(fs::FileError::NotFound) => simple_error!("{path} not found."),
+            Err(_) => simple_error!("An error occurred."),
+            Ok(data) => Ok(data),
+        }
+    }
+
+    pub fn partitions(&mut self) -> SimpleResult<Vec<&mut Partition>> {
+        let mut partitions = Vec::new();
+        for storage_device in self.devices()? {
+            let StorageDevice::Drive { partitions: device_partitions, .. } = storage_device else {
+                continue; // ignore CD drives
+            };
+
+            partitions.extend(device_partitions);
+        }
+        Ok(partitions)
+    }
+
+    pub fn partition_by_name(&mut self, name: &str) -> SimpleResult<&mut Partition> {
+        for storage_device in self.devices()? {
+            let StorageDevice::Drive { partitions, .. } = storage_device else {
+                continue; // ignore CD drives
+            };
+
+            for partition in partitions {
+                if partition.linux_name() == name {
+                    return Ok(partition);
+                }
+            }
+        }
+        simple_error!("No partition with the name {name} was found.")
+    }
+}
+
 impl StorageDevice {
     pub fn linux_name(&self) -> &str {
         match self {
@@ -76,18 +140,7 @@ impl StorageDevice {
         }
     }
 
-    pub fn all() -> SimpleResult<&'static mut Vec<StorageDevice>> {
-        let block_handles = boot::find_handles::<BlockIO>().unwrap();
-        let mut devices_changed = false;
-
-        if let Some((old_handles, devices)) = unsafe { STORAGE_DEVICES.as_mut() } {
-            if *old_handles == *block_handles { // this assumes the order of handles will not change between calls
-                return Ok(devices);
-            } else {
-                devices_changed = true;
-            }
-        }
-
+    pub fn from_block_handles(block_handles: &Vec<Handle>) -> SimpleResult<Vec<StorageDevice>> {
         let mut drives: Vec<StorageDevice> = Vec::new();
         let handle_dpath_pairs: Vec<(Handle, Box<DevicePath>)> = get_device_paths_for_handles(block_handles.clone());
         // TODO: sort block devices based on their DevicePaths; now we just assume that the drives will be found in the same order as linux finds (and names) them
@@ -177,20 +230,11 @@ impl StorageDevice {
             }
         }
 
-        let devices = unsafe {
-            STORAGE_DEVICES = Some((block_handles, drives));
-            &mut STORAGE_DEVICES.as_mut().unwrap().1
-        };
-
-        if devices_changed {
-            simple_error!("The block devices have changed. The names of existing devices may have changed as well. Please check with 'lsblk'.")
-        } else {
-            Ok(devices)
-        }
+        Ok(drives)
     }
 }
 
-// helper for StorageDevice::all()
+// helper for StorageDevice::from_block_handes()
 fn get_device_paths_for_handles(handles: Vec<Handle>) -> Vec<(Handle, Box<DevicePath>)> {
     let mut device_paths = Vec::new();
     for handle in handles {
@@ -200,7 +244,7 @@ fn get_device_paths_for_handles(handles: Vec<Handle>) -> Vec<(Handle, Box<Device
     device_paths
 }
 
-// helper for StorageDevice::all()
+// helper for StorageDevice::from_block_handes()
 pub fn group_block_devices(handle_dpath_pairs: Vec<(Handle, Box<DevicePath>)>) -> Vec<Vec<(Handle, Box<DevicePath>)>> {
     let mut groups: Vec<Vec<(Handle, Box<DevicePath>)>> = Vec::new();
     let mut grouping_nodes: Vec<CString16> = Vec::new();
@@ -234,19 +278,6 @@ impl fmt::Display for StorageDevice {
             human_readable_size(self.size())
         )
     }
-}
-
-struct DiskIoMediaIdPair {
-    disk_io: ScopedProtocol<DiskIo>,
-    media_id: u32,
-}
-
-pub struct Partition {
-    linux_name: String,
-    handle: Handle,
-    media_id: u32,
-    size: u64,
-    fs: Option<Box<dyn Filesystem>>,
 }
 
 impl Partition {
@@ -289,18 +320,6 @@ impl Partition {
         self.linux_name.as_str()
     }
 
-    pub fn all() -> SimpleResult<Vec<&'static mut Partition>> {
-        let mut partitions = Vec::new();
-        for storage_device in StorageDevice::all()? {
-            let StorageDevice::Drive { partitions: device_partitions, .. } = storage_device else {
-                continue; // ignore CD drives
-            };
-
-            partitions.extend(device_partitions);
-        }
-        Ok(partitions)
-    }
-
     pub fn fstype(&self) -> Option<fs::FsType> {
         Some(self.fs.as_ref()?.format())
     }
@@ -311,21 +330,6 @@ impl Partition {
             Some(fs::FsType::Ext4) => "EXT4",
             Some(fs::FsType::Fat) => "FAT",
         }
-    }
-
-    pub fn find_by_name(name: &str) -> SimpleResult<&mut Partition> {
-        for storage_device in StorageDevice::all()? {
-            let StorageDevice::Drive { partitions, .. } = storage_device else {
-                continue; // ignore CD drives
-            };
-
-            for partition in partitions {
-                if partition.linux_name() == name {
-                    return Ok(partition);
-                }
-            }
-        }
-        simple_error!("No partition with the name {name} was found.")
     }
 
     pub fn fs(&mut self) -> Option<&mut Box<dyn Filesystem>> {
@@ -422,8 +426,6 @@ impl Ext4Read for DiskIoMediaIdPair {
         start_byte: u64,
         dst: &mut [u8],
     ) -> Result<(), Box<dyn core::error::Error + Send + Sync + 'static>> {
-        // println!("Reading ext4 {} bytes at {}-{}", dst.len(), start_byte, start_byte+dst.len() as u64);
-
         match self.disk_io.read_disk(self.media_id, start_byte, dst) {
             Ok(()) => Ok(()),
             Err(uefi_error) => Err(Box::new(SimpleError::from(uefi_error))),
