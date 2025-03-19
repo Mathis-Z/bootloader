@@ -24,7 +24,7 @@ use uefi::{
 };
 use uefi_raw::protocol::file_system::FileAttribute;
 
-use crate::disk::human_readable_size;
+use crate::{disk::human_readable_size, simple_error::SimpleError};
 use crate::simple_error::SimpleResult;
 
 use super::simple_error;
@@ -264,14 +264,16 @@ impl Display for File {
 }
 
 impl TryFrom<ext4_view::DirEntry> for File {
-    type Error = anyhow::Error;
+    type Error = SimpleError;
 
     fn try_from(dir_entry: ext4_view::DirEntry) -> Result<Self, Self::Error> {
-        let name = dir_entry.file_name().as_str()?.to_string();
+        let Ok(name) = dir_entry.file_name().as_str() else {
+            return simple_error!("Could not convert filename to string!")
+        };
         let ftype = dir_entry.file_type()?.into();
         let size = dir_entry.metadata()?.len();
 
-        Ok(File { name, ftype, size })
+        Ok(File { name: name.to_string(), ftype, size })
     }
 }
 

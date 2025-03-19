@@ -9,7 +9,6 @@ edition = "2021"
 uefi = { version = "0.33.0", features = ["alloc", "global_allocator"]}
 uefi-raw = "0.9.0"
 ext4-view = "0.9.1"
-anyhow = { version = "1.0.93", default-features = false }
 regex = { version = "1.11.1", default-features = false }
 
 [profile.release]
