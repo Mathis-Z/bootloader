@@ -97,15 +97,14 @@ The Linux boot protocol has multiple versions (2.00 - 2.12). The newest version,
 4. If ramdisk present: Copy the ramdisk to an aligned address. The alignment requirements are given in the kernel header. Set the ramdisk pointer and size in the kernel header.
 5. Copy the protected-mode kernel code to an aligned address. The protected-mode kernel starts
 right after the real-mode part of the kernel whose size can be calculated using the kernel header (setup_sects*512).
-6. Allocate space for a stack and a heap. Set the heap_end_ptr in the kernel header.
-7. Copy the kernel header (offset +0x1F1 from the start of the kernel image) into the zero page at offset +0x1F1
-8. Set the video parameters in the zero page. I found that newer kernels do this themselves so it does not matter what we put there but older kernels rely on the bootloader for this.
-9. Create a GDT with flat 4 GiB code and data segments.
-10. Build the page tables. "The range with setup_header.init_size from start address of loaded
+6. Copy the kernel header (offset +0x1F1 from the start of the kernel image) into the zero page at offset +0x1F1
+7. Set the video parameters in the zero page. I found that newer kernels do this themselves so it does not matter what we put there but older kernels rely on the bootloader for this.
+8. Create a GDT with flat 4 GiB code and data segments.
+9. Build the page tables. "The range with setup_header.init_size from start address of loaded
 kernel and zero page and command line buffer get ident mapping" ([boot protocol](https://github.com/torvalds/linux/blob/v4.16/Documentation/x86/boot.txt)). For simplicity I just identity-map all memory.
-11. Exit the boot services. This returns the current memory map. Use this to set the memmory map in the zero page.
-12. Set the GDTR.
-13. Use inline assembly to set the prepared page table and set rsp to the prepared stack. Jump to the kernel entry point.
+10. Exit the boot services. This returns the current memory map. Use this to set the memmory map in the zero page.
+11. Set the GDTR.
+12. Use inline assembly to set the prepared page table and set rsp to the prepared stack. Jump to the kernel entry point.
 
 ## Other operating systems
 

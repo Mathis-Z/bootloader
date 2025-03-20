@@ -72,7 +72,7 @@ impl Storage {
         if devices_changed {
             self.devices = StorageDevice::from_block_handles(&block_handles)?;
             self.last_seen_block_handles = block_handles;
-            return simple_error!("The block devices have changed. The names of existing devices may have changed as well. Please check with 'lsblk'.")
+            return simple_error!("The block devices have changed. The names of existing devices may have changed as well. Please check with 'ls'.")
         }
 
         Ok(self.devices.as_mut())
@@ -393,7 +393,7 @@ pub fn human_readable_size(size: u64) -> String {
     } else if size >= 10 * K {
         format!("{:>4} KiB", size / K)
     } else {
-        format!("{:>4} B ", size)
+        format!("{:>4} B  ", size)
     }
 }
 

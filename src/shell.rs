@@ -541,18 +541,16 @@ impl Shell {
             let mut ramdisk_image_path = self.cwd.clone();
             ramdisk_image_path.push(&args[2]);
 
+            println!("Loading ramdisk image into memory...");
             ramdisk = Some(self.storage.read_file(&ramdisk_image_path).or_else(|err| {
                 simple_error!("Could not read ramdisk image: {err}")
             })?);
-
-            println!("Ramdisk loaded at {:x}", ramdisk.as_ref().unwrap().as_ptr() as usize);
-            println!("Ramdisk size: {:x}", ramdisk.as_ref().unwrap().len());
-            
         }
 
         let mut kernel_image_path = self.cwd.clone();
         kernel_image_path.push(&args[0]);
 
+        println!("Loading kernel image into memory...");
         let kernel = self.storage.read_file(&kernel_image_path).or_else(|err| {
             simple_error!("Could not read kernel image: {err}")
         })?;
